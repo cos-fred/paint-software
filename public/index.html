@@ -37,16 +37,21 @@
             <header class="header">
                 <div class="header-left">
                     <button id="sidebar-toggle" class="btn btn-icon" aria-label="Toggle menu">☰</button>
-                    <div class="logo">VEEMENZ</div>
-                    <h1>VEEMENZ</h1>
+                    <div class="brand">
+                        <span class="logo-mark">V</span>
+                        <div class="brand-text">
+                            <span class="brand-name">VEEMENZ</span>
+                            <span class="brand-tagline">Paint Inventory</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="header-right">
                     <div class="search-box">
                         <input type="text" id="global-search" placeholder="Search products, customers..." aria-label="Global search">
                     </div>
                     <div class="warehouse-selector">
-                        <label for="warehouse-filter" style="display: none;">Warehouse</label>
-                        <select id="warehouse-filter" class="filter-select" style="min-width: 180px;">
+                        <label for="warehouse-filter">Warehouse</label>
+                        <select id="warehouse-filter" class="filter-select">
                             <option value="">All Warehouses</option>
                         </select>
                     </div>
@@ -93,9 +98,17 @@
                             <span class="nav-icon">💰</span>
                             <span>Sales</span>
                         </a>
-                        <a href="#" class="nav-item" data-section="purchase-orders">
-                            <span class="nav-icon">📋</span>
-                            <span>Purchase Orders</span>
+                        <a href="#" class="nav-item" data-section="transfers">
+                            <span class="nav-icon">🔄</span>
+                            <span>Transfers</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="returns">
+                            <span class="nav-icon">↩️</span>
+                            <span>Returns</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="audit" id="audit-nav" style="display:none;">
+                            <span class="nav-icon">📜</span>
+                            <span>Audit Log</span>
                         </a>
                         <a href="#" class="nav-item" data-section="reports">
                             <span class="nav-icon">📈</span>
@@ -125,6 +138,10 @@
                                 <h3>Recent Sales</h3>
                                 <div id="recent-sales-list"></div>
                             </div>
+                            <div class="card">
+                                <h3>Sales Trend (30 days)</h3>
+                                <div id="dashboard-chart" class="chart-container"></div>
+                            </div>
                         </div>
                     </section>
 
@@ -149,11 +166,9 @@
                                     <tr>
                                         <th>Product</th>
                                         <th>Warehouse</th>
-                                        <th>Unit Price</th>
-                                        <th>Carton Price (12)</th>
+                                        <th>Carton Price</th>
                                         <th>20L Price</th>
-                                        <th>Unit Stock</th>
-                                        <th>Carton Stock</th>
+                                        <th>Cartons</th>
                                         <th>20L Stock</th>
                                         <th>Threshold</th>
                                         <th>Total Value</th>
@@ -182,12 +197,12 @@
                                 <thead>
                                     <tr>
                                         <th>Name</th>
+                                        <th>SKU</th>
                                         <th>Unit Price</th>
-                                        <th>Carton Price (12)</th>
+                                        <th>Carton Price</th>
                                         <th>20L Price</th>
-                                        <th>Total Unit Stock</th>
-                                        <th>Total Carton Stock</th>
-                                        <th>Total 20L Stock</th>
+                                        <th>Total Cartons</th>
+                                        <th>Total 20L</th>
                                         <th>Threshold</th>
                                         <th>Total Value</th>
                                         <th>Actions</th>
@@ -228,7 +243,10 @@
                     <section id="sales-section" class="content-section">
                         <div class="section-header">
                             <h2>Sales</h2>
-                            <button class="btn btn-primary" id="new-sale-btn">New Sale</button>
+                            <div class="header-actions">
+                                <button class="btn btn-secondary" id="export-sales-btn">Export Sales</button>
+                                <button class="btn btn-primary" id="new-sale-btn">New Sale</button>
+                            </div>
                         </div>
                         <div class="filters">
                             <input type="text" id="sale-search" placeholder="Search sales..." class="filter-input">
@@ -263,32 +281,68 @@
                         </div>
                     </section>
 
-                    <section id="purchase-orders-section" class="content-section">
+                    <section id="transfers-section" class="content-section">
                         <div class="section-header">
-                            <h2>Purchase Orders</h2>
-                            <button class="btn btn-primary" id="new-po-btn">New Purchase Order</button>
-                        </div>
-                        <div class="filters">
-                            <select id="po-status-filter" class="filter-select">
-                                <option value="">All Status</option>
-                                <option value="pending">Pending</option>
-                                <option value="ordered">Ordered</option>
-                                <option value="partial">Partial</option>
-                                <option value="received">Received</option>
-                                <option value="cancelled">Cancelled</option>
-                            </select>
+                            <h2>Stock Transfers</h2>
+                            <button class="btn btn-primary" id="new-transfer-btn">New Transfer</button>
                         </div>
                         <div class="table-container">
-                            <table id="purchase-orders-table">
+                            <table id="transfers-table">
                                 <thead>
                                     <tr>
                                         <th>Date</th>
-                                        <th>Supplier</th>
-                                        <th>Items</th>
-                                        <th>Total Cost</th>
-                                        <th>Status</th>
-                                        <th>Expected</th>
-                                        <th>Actions</th>
+                                        <th>Product</th>
+                                        <th>From</th>
+                                        <th>To</th>
+                                        <th>Type</th>
+                                        <th>Quantity</th>
+                                        <th>By</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="returns-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Returns</h2>
+                            <button class="btn btn-primary" id="new-return-btn">Process Return</button>
+                        </div>
+                        <div class="table-container">
+                            <table id="returns-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Product</th>
+                                        <th>Type</th>
+                                        <th>Quantity</th>
+                                        <th>Value</th>
+                                        <th>Reason</th>
+                                        <th>By</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="audit-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Audit Log</h2>
+                        </div>
+                        <div class="filters">
+                            <input type="text" id="audit-search" placeholder="Search actions..." class="filter-input">
+                        </div>
+                        <div class="table-container">
+                            <table id="audit-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>User</th>
+                                        <th>Action</th>
+                                        <th>Entity</th>
+                                        <th>Details</th>
                                     </tr>
                                 </thead>
                                 <tbody></tbody>
@@ -435,6 +489,21 @@
                                         <label>Default Low Stock Threshold</label>
                                         <input type="number" id="setting-low_stock_threshold_default" name="low_stock_threshold_default" min="1" value="10">
                                     </div>
+                                    <hr style="margin:16px 0;">
+                                    <h4>Low-Stock Notifications</h4>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Enable Notifications</label>
+                                            <select id="setting-notifications_enabled">
+                                                <option value="false">Disabled</option>
+                                                <option value="true">Enabled</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Webhook URL (email/WhatsApp gateway)</label>
+                                            <input type="text" id="setting-notifications_webhook_url" placeholder="https://...">
+                                        </div>
+                                    </div>
                                     <button type="submit" class="btn btn-primary">Save System Settings</button>
                                 </form>
                             </div>
@@ -502,6 +571,10 @@
                         <input type="text" id="product-name" required placeholder="Product name">
                     </div>
                     <div class="form-group">
+                        <label>SKU / Barcode</label>
+                        <input type="text" id="product-sku" placeholder="Optional">
+                    </div>
+                    <div class="form-group">
                         <label>Description</label>
                         <input type="text" id="product-description" placeholder="Optional description">
                     </div>
@@ -510,29 +583,35 @@
                     <div class="form-group">
                         <label>Unit Price *</label>
                         <input type="number" id="product-unit-price" step="0.01" min="0" required placeholder="0.00">
+                        <small>Used to auto-calculate carton price (×12)</small>
                     </div>
                     <div class="form-group">
-                        <label>Carton Price (12 units)</label>
-                        <input type="number" id="product-carton-price" step="0.01" min="0" placeholder="Auto: 12 × Unit">
-                        <small>Auto-calculated as 12 × Unit Price if empty</small>
+                        <label>Carton Price</label>
+                        <input type="number" id="product-carton-price" step="0.01" min="0" placeholder="Auto: 12 × unit">
+                        <small>Auto-calculated as 12 × unit price if left empty</small>
                     </div>
                     <div class="form-group">
                         <label>20L Container Price</label>
                         <input type="number" id="product-liter20-price" step="0.01" min="0" placeholder="0.00">
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Initial Unit Stock</label>
-                        <input type="number" id="product-unit-stock" min="0" value="0" placeholder="0">
-                    </div>
-                    <div class="form-group">
-                        <label>Initial Carton Stock</label>
-                        <input type="number" id="product-carton-stock" min="0" value="0" placeholder="0">
-                    </div>
-                    <div class="form-group">
-                        <label>Initial 20L Stock</label>
-                        <input type="number" id="product-liter20-stock" min="0" value="0" placeholder="0">
+                <div id="product-initial-stock-section" class="form-section">
+                    <h4>Initial stock (this warehouse only)</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Warehouse *</label>
+                            <select id="product-initial-warehouse" required>
+                                <option value="">Select Warehouse</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Initial Cartons</label>
+                            <input type="number" id="product-carton-stock" min="0" value="0" placeholder="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Initial 20L Stock</label>
+                            <input type="number" id="product-liter20-stock" min="0" value="0" placeholder="0">
+                        </div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -573,8 +652,7 @@
                     <div class="form-group">
                         <label>Unit Type *</label>
                         <select id="stock-adjust-unit-type" required>
-                            <option value="unit">Unit</option>
-                            <option value="carton">Carton (12)</option>
+                            <option value="carton">Carton</option>
                             <option value="liter20">20L Container</option>
                         </select>
                     </div>
@@ -699,40 +777,46 @@
                             <option value="card">Card</option>
                             <option value="transfer">Bank Transfer</option>
                             <option value="momo">Mobile Money</option>
-                            <option value="credit">Credit</option>
                         </select>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Items</label>
-                    <div id="sale-items-container">
-                        <div class="sale-item-row">
-                            <select class="sale-item-product" required>
-                                <option value="">Select Product</option>
+                    <div class="form-group">
+                        <label>Items</label>
+                        <div id="sale-items-container">
+                            <div class="sale-item-row">
+                                <select class="sale-item-product" required>
+                                    <option value="">Select Product</option>
+                                </select>
+                                <select class="sale-item-unit" required>
+                                    <option value="carton">Carton</option>
+                                    <option value="liter20">20L Container</option>
+                                </select>
+                                <input type="number" class="sale-item-qty" min="1" value="1" required>
+                                <input type="number" class="sale-item-discount" step="0.01" min="0" value="0" title="Line discount">
+                                <span class="sale-item-price"></span>
+                                <span class="sale-item-total">₵0.00</span>
+                                <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary" id="add-sale-item">+ Add Item</button>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Discount Type</label>
+                            <select id="sale-discount-type">
+                                <option value="amount">Amount (₵)</option>
+                                <option value="percent">Percent (%)</option>
                             </select>
-                            <select class="sale-item-unit" required>
-                                <option value="unit">Unit</option>
-                                <option value="carton">Carton (12)</option>
-                                <option value="liter20">20L Container</option>
-                            </select>
-                            <input type="number" class="sale-item-qty" min="1" value="1" required>
-                            <span class="sale-item-price"></span>
-                            <span class="sale-item-total">₵0.00</span>
-                            <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
+                        </div>
+                        <div class="form-group">
+                            <label>Discount</label>
+                            <input type="number" id="sale-discount" step="0.01" min="0" value="0" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Notes</label>
+                            <input type="text" id="sale-notes" placeholder="Optional notes">
                         </div>
                     </div>
-                    <button type="button" class="btn btn-secondary" id="add-sale-item">+ Add Item</button>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Discount</label>
-                        <input type="number" id="sale-discount" step="0.01" min="0" value="0" placeholder="0.00">
-                    </div>
-                    <div class="form-group">
-                        <label>Notes</label>
-                        <input type="text" id="sale-notes" placeholder="Optional notes">
-                    </div>
-                </div>
                 <div class="sale-summary">
                     <div class="summary-row"><span>Subtotal:</span> <span id="sale-subtotal">₵0.00</span></div>
                     <div class="summary-row"><span>Tax:</span> <span id="sale-tax">₵0.00</span></div>
@@ -742,68 +826,6 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                     <button type="submit" class="btn btn-primary">Complete Sale</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="purchase-order-modal" class="modal modal-large">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>New Purchase Order</h3>
-                <button class="modal-close" aria-label="Close">&times;</button>
-            </div>
-            <form id="po-form">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Supplier Name *</label>
-                        <input type="text" id="po-supplier-name" required placeholder="Supplier name">
-                    </div>
-                    <div class="form-group">
-                        <label>Supplier Contact</label>
-                        <input type="text" id="po-supplier-contact" placeholder="Phone/Email">
-                    </div>
-                    <div class="form-group">
-                        <label>Warehouse *</label>
-                        <select id="po-warehouse" required>
-                            <option value="">Select Warehouse</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Expected Date</label>
-                    <input type="date" id="po-expected-date">
-                </div>
-                <div class="form-group">
-                    <label>Items</label>
-                    <div id="po-items-container">
-                        <div class="po-item-row">
-                            <select class="po-item-product" required>
-                                <option value="">Select Product</option>
-                            </select>
-                            <select class="po-item-unit" required>
-                                <option value="unit">Unit</option>
-                                <option value="carton">Carton (12)</option>
-                                <option value="liter20">20L Container</option>
-                            </select>
-                            <input type="number" class="po-item-qty" min="1" value="1" required>
-                            <input type="number" class="po-item-cost" step="0.01" min="0" placeholder="Unit Cost" required>
-                            <span class="po-item-total">₵0.00</span>
-                            <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
-                        </div>
-                    </div>
-                    <button type="button" class="btn btn-secondary" id="add-po-item">+ Add Item</button>
-                </div>
-                <div class="form-group">
-                    <label>Notes</label>
-                    <textarea id="po-notes" rows="2" placeholder="Optional notes"></textarea>
-                </div>
-                <div class="po-summary">
-                    <div class="summary-row total"><span>Total Cost:</span> <span id="po-total">₵0.00</span></div>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Create Purchase Order</button>
                 </div>
             </form>
         </div>
@@ -820,6 +842,76 @@
                 <button type="button" class="btn btn-secondary" id="print-receipt-btn">Print</button>
                 <button type="button" class="btn btn-primary modal-close">Close</button>
             </div>
+        </div>
+    </div>
+
+    <div id="transfer-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Transfer Stock</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="transfer-form">
+                <div class="form-group">
+                    <label>Product *</label>
+                    <select id="transfer-product" required><option value="">Select Product</option></select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>From Warehouse *</label>
+                        <select id="transfer-from" required><option value="">Select Warehouse</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label>To Warehouse *</label>
+                        <select id="transfer-to" required><option value="">Select Warehouse</option></select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Unit Type *</label>
+                        <select id="transfer-unit-type" required>
+                            <option value="carton">Carton</option>
+                            <option value="liter20">20L Container</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Quantity *</label>
+                        <input type="number" id="transfer-quantity" min="1" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <input type="text" id="transfer-notes" placeholder="Optional">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Transfer Stock</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="return-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Process Return</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="return-form">
+                <div class="form-group">
+                    <label>Sale *</label>
+                    <select id="return-sale" required><option value="">Select Sale</option></select>
+                </div>
+                <div id="return-items-container"></div>
+                <div class="form-group">
+                    <label>Reason</label>
+                    <input type="text" id="return-reason" placeholder="e.g. Damaged, wrong item">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Process Return</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -905,6 +997,7 @@
 
     <div id="toast-container" class="toast-container"></div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

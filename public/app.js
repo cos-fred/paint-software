@@ -8,14 +8,40 @@ let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let warehousesCache = [];
 let taxRate = 0.10;
 let confirmCallback = null;
+let saleWarehouseChangeHandler = null;
 
 // ===================================================
 // CORE UTILITIES
 // ===================================================
 
+function getActiveWarehouseId() {
+    return document.getElementById('warehouse-filter')?.value || '';
+}
+
+function getWarehouseName(id) {
+    if (!id) return 'All warehouses';
+    return warehousesCache.find(w => w.id === id)?.name || 'Warehouse';
+}
+
+function updateWarehouseScopeHints() {
+    const whId = getActiveWarehouseId();
+    const whName = getWarehouseName(whId);
+    const hint = document.getElementById('products-warehouse-hint');
+    if (hint) {
+        hint.textContent = whId
+            ? `Showing stock for ${whName} only. Change the warehouse in the top bar.`
+            : 'Showing combined stock across all warehouses — pick one warehouse in the top bar to match what you entered when adding a product.';
+    }
+}
+
 function formatCurrency(amount) {
     const num = parseFloat(amount) || 0;
     return '₵' + num.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatSaleUnitType(type) {
+    const labels = { carton: 'Carton', liter20: '20L Container' };
+    return labels[type] || type;
 }
 
 function escapeHtml(text) {
@@ -106,6 +132,8 @@ async function loadUser() {
         document.getElementById('profile-role').value = user.role;
         if (user.role === 'admin') {
             document.getElementById('user-management-card').style.display = '';
+            const auditNav = document.getElementById('audit-nav');
+            if (auditNav) auditNav.style.display = '';
         }
         return user;
     } catch (err) {
@@ -136,6 +164,7 @@ async function init() {
         showLoginScreen();
     }
     setupEventListeners();
+    initRealtime();
 }
 
 // ===================================================
@@ -247,12 +276,6 @@ function setupEventListeners() {
     document.getElementById('sale-date-from')?.addEventListener('change', loadSales);
     document.getElementById('sale-date-to')?.addEventListener('change', loadSales);
 
-    // Purchase Orders
-    document.getElementById('new-po-btn')?.addEventListener('click', openPOModal);
-    document.getElementById('po-form')?.addEventListener('submit', handlePOSubmit);
-    document.getElementById('add-po-item')?.addEventListener('click', addPOItemRow);
-    document.getElementById('po-status-filter')?.addEventListener('change', loadPurchaseOrders);
-
     // Alerts
     document.getElementById('mark-all-read-btn')?.addEventListener('click', markAllAlertsRead);
     document.getElementById('show-unread-only')?.addEventListener('change', loadAlerts);
@@ -284,6 +307,7 @@ function setupEventListeners() {
 
     // Warehouse filter
     document.getElementById('warehouse-filter')?.addEventListener('change', () => {
+        updateWarehouseScopeHints();
         const activeSection = document.querySelector('.nav-item.active')?.dataset.section;
         if (activeSection) switchSection(activeSection);
     });
@@ -297,6 +321,23 @@ function setupEventListeners() {
     document.getElementById('stock-adjust-form')?.addEventListener('submit', handleStockAdjustSubmit);
     document.getElementById('stock-adjust-unit-type')?.addEventListener('change', loadCurrentStockForAdjustment);
     document.getElementById('stock-adjust-warehouse')?.addEventListener('change', loadCurrentStockForAdjustment);
+
+    // Transfers
+    document.getElementById('new-transfer-btn')?.addEventListener('click', openTransferModal);
+    document.getElementById('transfer-form')?.addEventListener('submit', handleTransferSubmit);
+
+    // Returns
+    document.getElementById('new-return-btn')?.addEventListener('click', () => openReturnModal());
+    document.getElementById('return-form')?.addEventListener('submit', handleReturnSubmit);
+
+    // Audit
+    document.getElementById('audit-search')?.addEventListener('input', debounce(loadAudit, 400));
+
+    // Sales export
+    document.getElementById('export-sales-btn')?.addEventListener('click', exportSales);
+
+    // Discount type change recalculates summary
+    document.getElementById('sale-discount-type')?.addEventListener('change', updateSaleSummary);
 
     // Keyboard escape closes modal
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
@@ -330,10 +371,12 @@ function switchSection(section) {
     switch (section) {
         case 'dashboard': loadDashboard(); break;
         case 'stock': loadStock(); loadWarehouses(); break;
-        case 'products': loadProducts(); break;
+        case 'products': loadWarehouses(); updateWarehouseScopeHints(); loadProducts(); break;
         case 'customers': loadCustomers(); break;
         case 'sales': loadSales(); break;
-        case 'purchase-orders': loadPurchaseOrders(); break;
+        case 'transfers': loadTransfers(); loadWarehouses(); loadProductsForSelect(); break;
+        case 'returns': loadReturns(); break;
+        case 'audit': loadAudit(); break;
         case 'reports': loadReports(); break;
         case 'alerts': loadAlerts(); break;
         case 'settings': loadSettings(); if (currentUser?.role === 'admin') loadUsers(); break;
@@ -349,12 +392,12 @@ async function loadWarehouses() {
     try {
         const res = await fetchWithAuth(`${API_BASE}/products/warehouses`);
         warehousesCache = await res.json();
-        const selectors = ['warehouse-filter', 'stock-warehouse-filter', 'sale-warehouse', 'po-warehouse', 'stock-adjust-warehouse'];
+        const selectors = ['warehouse-filter', 'stock-warehouse-filter', 'sale-warehouse', 'stock-adjust-warehouse', 'product-initial-warehouse'];
         selectors.forEach(id => {
             const select = document.getElementById(id);
             if (!select) return;
             const current = select.value;
-            const allLabel = (id === 'sale-warehouse' || id === 'po-warehouse' || id === 'stock-adjust-warehouse') ? 'Select Warehouse' : 'All Warehouses';
+            const allLabel = (id === 'sale-warehouse' || id === 'stock-adjust-warehouse' || id === 'product-initial-warehouse') ? 'Select Warehouse' : 'All Warehouses';
             select.innerHTML = `<option value="">${allLabel}</option>` +
                 warehousesCache.map(w => `<option value="${w.id}">${escapeHtml(w.name)} (${w.code})</option>`).join('');
             if (current) select.value = current;
@@ -392,7 +435,7 @@ async function loadDashboard() {
             </div>
             <div class="stat-card warning">
                 <div class="stat-icon">📊</div>
-                <div class="stat-info"><h4>Total Stock Items</h4><div class="stat-value">${inventory.summary?.total_stock_items ?? 0}</div></div>
+                <div class="stat-info"><h4>Cartons + 20L (total)</h4><div class="stat-value">${inventory.summary?.total_stock_items ?? 0}</div></div>
             </div>
             <div class="stat-card danger">
                 <div class="stat-icon">⚠️</div>
@@ -412,7 +455,7 @@ async function loadDashboard() {
         document.getElementById('low-stock-list').innerHTML = lowStockItems.length > 0
             ? lowStockItems.slice(0, 5).map(p => `
                 <div class="alert-item alert-warning">
-                    <strong>${escapeHtml(p.name)}</strong> — Units: ${p.unit_stock}, Cartons: ${p.carton_stock}, 20L: ${p.liter20_stock}
+                    <strong>${escapeHtml(p.name)}</strong> — Cartons: ${p.carton_stock}, 20L: ${p.liter20_stock}
                     <small>(Threshold: ${p.low_stock_threshold})</small>
                 </div>`).join('')
             : '<div class="empty-state"><h4>All Good</h4><p>No low stock alerts</p></div>';
@@ -429,6 +472,24 @@ async function loadDashboard() {
                     <div class="price-tag">${formatCurrency(s.total)}</div>
                 </div>`).join('')
             : '<div class="empty-state"><h4>No Sales Yet</h4><p>Recent sales will appear here</p></div>';
+
+        const dailyRes = await fetchWithAuth(`${API_BASE}/reports/sales/daily?days=30${warehouseId ? '&warehouse_id=' + warehouseId : ''}`);
+        const dailySales = await dailyRes.json();
+        const chartEl = document.getElementById('dashboard-chart');
+        if (chartEl) {
+            if (dailySales.length) {
+                const maxRevenue = Math.max(...dailySales.map(d => d.daily_revenue), 1);
+                chartEl.innerHTML = dailySales.slice(-30).map(d => {
+                    const pct = (d.daily_revenue / maxRevenue) * 100;
+                    return `<div class="chart-bar-wrap" title="${d.sale_day}: ${formatCurrency(d.daily_revenue)}">
+                        <div class="chart-bar" style="height:${Math.max(pct, 2)}%"></div>
+                        <div class="chart-label">${d.sale_day?.slice(5)}</div>
+                    </div>`;
+                }).join('');
+            } else {
+                chartEl.innerHTML = '<div class="empty-state"><h4>No sales yet</h4></div>';
+            }
+        }
     } catch (err) {
         console.error('Dashboard error:', err);
         showToast('Failed to load dashboard', 'error');
@@ -452,24 +513,23 @@ async function loadStock() {
         const tbody = document.querySelector('#stock-table tbody');
 
         if (!products.length) {
-            tbody.innerHTML = '<tr><td colspan="12" class="empty-state"><h4>No Products</h4><p>Add products to see stock here</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Products</h4><p>Add products to see stock here</p></td></tr>';
             return;
         }
 
+        const whName = warehouseId ? (warehousesCache.find(w => w.id === warehouseId)?.name || 'Selected') : 'All (combined)';
+
         tbody.innerHTML = products.map(p => {
-            const unitStock = p.warehouse_unit_stock ?? p.total_unit_stock ?? 0;
             const cartonStock = p.warehouse_carton_stock ?? p.total_carton_stock ?? 0;
             const liter20Stock = p.warehouse_liter20_stock ?? p.total_liter20_stock ?? 0;
-            const totalValue = (p.unit_price * unitStock) + (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
-            const isLow = unitStock <= p.low_stock_threshold || cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
+            const totalValue = (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
+            const isLow = cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
             const cls = (stock) => stock <= p.low_stock_threshold ? 'stock-low' : (stock === 0 ? 'stock-warning' : 'stock-ok');
             return `<tr${isLow ? ' class="low-stock-row"' : ''}>
                 <td><strong>${escapeHtml(p.name)}</strong><br><small style="color:var(--text-muted)">${escapeHtml(p.description || '—')}</small></td>
-                <td>${escapeHtml(p.warehouse_name || 'All')}</td>
-                <td>${formatCurrency(p.unit_price)}</td>
+                <td>${escapeHtml(whName)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${cls(unitStock)}">${unitStock}</td>
                 <td class="${cls(cartonStock)}">${cartonStock}</td>
                 <td class="${cls(liter20Stock)}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
@@ -522,7 +582,7 @@ async function loadCurrentStockForAdjustment() {
     try {
         const res = await fetchWithAuth(`${API_BASE}/products/${productId}?warehouse_id=${warehouseId}`);
         const product = await res.json();
-        const fieldMap = { unit: 'warehouse_unit_stock', carton: 'warehouse_carton_stock', liter20: 'warehouse_liter20_stock' };
+        const fieldMap = { carton: 'warehouse_carton_stock', liter20: 'warehouse_liter20_stock' };
         document.getElementById('stock-adjust-current').value = product[fieldMap[unitType]] ?? 0;
     } catch (err) { console.error(err); }
 }
@@ -567,22 +627,21 @@ async function loadProducts() {
         const tbody = document.querySelector('#products-table tbody');
 
         if (!products.length) {
-            tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Products</h4><p>Click "Add Product" to get started</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><h4>No Products</h4><p>Click "Add Product" to get started</p></td></tr>';
             return;
         }
 
         tbody.innerHTML = products.map(p => {
-            const unitStock = p.total_unit_stock ?? 0;
             const cartonStock = p.total_carton_stock ?? 0;
             const liter20Stock = p.total_liter20_stock ?? 0;
-            const totalValue = (p.unit_price * unitStock) + (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
-            const isLow = unitStock <= p.low_stock_threshold || cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
+            const totalValue = (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
+            const isLow = cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
             return `<tr${isLow ? ' class="low-stock-row"' : ''}>
                 <td><strong>${escapeHtml(p.name)}</strong>${p.description ? `<br><small style="color:var(--text-muted)">${escapeHtml(p.description)}</small>` : ''}</td>
+                <td>${escapeHtml(p.sku || '—')}</td>
                 <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${unitStock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${unitStock}</td>
                 <td class="${cartonStock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${cartonStock}</td>
                 <td class="${liter20Stock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
@@ -599,25 +658,38 @@ async function loadProducts() {
     }
 }
 
-function openProductModal(productId = null) {
+async function openProductModal(productId = null) {
     const form = document.getElementById('product-form');
     form.reset();
     document.getElementById('product-id').value = '';
     document.getElementById('product-modal-title').textContent = 'Add Product';
     document.getElementById('product-threshold').value = 10;
+    const stockSection = document.getElementById('product-initial-stock-section');
+    const whSelect = document.getElementById('product-initial-warehouse');
+    if (stockSection) stockSection.style.display = '';
+    if (whSelect) { whSelect.required = true; }
+    await loadWarehouses();
+    const globalWh = document.getElementById('warehouse-filter')?.value;
+    if (globalWh && whSelect) whSelect.value = globalWh;
     if (productId) {
+        if (stockSection) stockSection.style.display = 'none';
+        if (whSelect) { whSelect.required = false; whSelect.value = ''; }
         fetchWithAuth(`${API_BASE}/products/${productId}`)
             .then(r => r.json())
             .then(p => {
                 document.getElementById('product-modal-title').textContent = 'Edit Product';
                 document.getElementById('product-id').value = p.id;
                 document.getElementById('product-name').value = p.name;
+                document.getElementById('product-sku').value = p.sku || '';
                 document.getElementById('product-description').value = p.description || '';
                 document.getElementById('product-unit-price').value = p.unit_price;
                 document.getElementById('product-carton-price').value = p.carton_price;
                 document.getElementById('product-liter20-price').value = p.liter20_price;
                 document.getElementById('product-threshold').value = p.low_stock_threshold;
+                document.getElementById('product-carton-price').dataset.autoSet = 'false';
             }).catch(err => showToast(err.message, 'error'));
+    } else {
+        document.getElementById('product-carton-price').dataset.autoSet = 'true';
     }
     showModal('product-modal');
 }
@@ -638,15 +710,23 @@ async function handleProductSubmit(e) {
     const id = document.getElementById('product-id').value;
     const data = {
         name: document.getElementById('product-name').value.trim(),
+        sku: document.getElementById('product-sku')?.value.trim() || null,
         description: document.getElementById('product-description').value.trim(),
         unit_price: parseFloat(document.getElementById('product-unit-price').value),
         carton_price: parseFloat(document.getElementById('product-carton-price').value) || null,
         liter20_price: parseFloat(document.getElementById('product-liter20-price').value) || 0,
-        low_stock_threshold: parseInt(document.getElementById('product-threshold').value) || 10,
-        unit_stock: parseInt(document.getElementById('product-unit-stock')?.value) || 0,
-        carton_stock: parseInt(document.getElementById('product-carton-stock')?.value) || 0,
-        liter20_stock: parseInt(document.getElementById('product-liter20-stock')?.value) || 0
+        low_stock_threshold: parseInt(document.getElementById('product-threshold').value) || 10
     };
+    if (!id) {
+        const warehouseId = document.getElementById('product-initial-warehouse')?.value;
+        if (!warehouseId) {
+            showToast('Please select which warehouse to add stock to', 'error');
+            return;
+        }
+        data.warehouse_id = warehouseId;
+        data.carton_stock = parseInt(document.getElementById('product-carton-stock')?.value, 10) || 0;
+        data.liter20_stock = parseInt(document.getElementById('product-liter20-stock')?.value, 10) || 0;
+    }
     try {
         const url = id ? `${API_BASE}/products/${id}` : `${API_BASE}/products`;
         const method = id ? 'PUT' : 'POST';
@@ -675,14 +755,13 @@ async function deleteProduct(id) {
 
 async function loadProductsForSelect() {
     try {
-        const warehouseId = document.getElementById('sale-warehouse')?.value || document.getElementById('po-warehouse')?.value || '';
+        const warehouseId = document.getElementById('sale-warehouse')?.value || '';
         const params = warehouseId ? `?warehouse_id=${warehouseId}` : '';
         const res = await fetchWithAuth(`${API_BASE}/products${params}`);
         const products = await res.json();
         const options = '<option value="">Select Product</option>' +
             products.map(p => `<option value="${p.id}" data-unit="${p.unit_price}" data-carton="${p.carton_price}" data-liter20="${p.liter20_price}">${escapeHtml(p.name)}</option>`).join('');
         document.querySelectorAll('.sale-item-product').forEach(s => s.innerHTML = options);
-        document.querySelectorAll('.po-item-product').forEach(s => s.innerHTML = options);
     } catch (err) { console.error('Load products for select error:', err); }
 }
 
@@ -709,7 +788,9 @@ async function loadCustomers() {
                 <td>${escapeHtml(c.email || '—')}</td>
                 <td>${escapeHtml(c.phone || '—')}</td>
                 <td>${escapeHtml([c.city, c.state, c.country].filter(Boolean).join(', ') || '—')}</td>
-                <td>—</td><td>—</td><td>—</td>
+                <td>${c.purchase_count ?? 0}</td>
+                <td>${formatCurrency(c.total_spent ?? 0)}</td>
+                <td>${c.last_purchase ? new Date(c.last_purchase).toLocaleDateString() : '—'}</td>
                 <td>
                     <button class="action-btn edit" onclick="editCustomer('${c.id}')">✏️ Edit</button>
                     <button class="action-btn delete" onclick="confirmDeleteCustomer('${c.id}','${escapeHtml(c.name)}')">🗑️ Delete</button>
@@ -777,7 +858,7 @@ async function handleCustomerSubmit(e) {
 }
 
 function confirmDeleteCustomer(id, name) {
-    showConfirm(`Delete customer "${name}"?`, async () => {
+    showConfirm(`Delete customer "${name}"? This cannot be undone.`, async () => {
         try {
             const res = await fetchWithAuth(`${API_BASE}/customers/${id}`, { method: 'DELETE' });
             const result = await res.json();
@@ -841,6 +922,7 @@ async function loadSales() {
                 <td><span class="status-badge status-${s.payment_status}">${s.payment_status}</span></td>
                 <td>
                     <button class="action-btn view" onclick="viewReceipt('${s.id}')">👁️ View</button>
+                    <button class="action-btn view" onclick="openReturnModal('${s.id}')">↩️ Return</button>
                     <button class="action-btn edit" onclick="editSaleStatus('${s.id}','${s.payment_status}')">✏️ Status</button>
                     <button class="action-btn delete" onclick="confirmDeleteSale('${s.id}')">🗑️ Delete</button>
                 </td>
@@ -867,11 +949,11 @@ function buildSaleItemRow() {
     return `<div class="sale-item-row">
         <select class="sale-item-product" required><option value="">Select Product</option></select>
         <select class="sale-item-unit" required>
-            <option value="unit">Unit</option>
-            <option value="carton">Carton (12)</option>
+            <option value="carton">Carton</option>
             <option value="liter20">20L Container</option>
         </select>
         <input type="number" class="sale-item-qty" min="1" value="1" required>
+        <input type="number" class="sale-item-discount" step="0.01" min="0" value="0" title="Line discount (₵)" placeholder="Disc.">
         <span class="sale-item-price"></span>
         <span class="sale-item-total">${formatCurrency(0)}</span>
         <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
@@ -882,6 +964,7 @@ function attachSaleItemEvents(row) {
     row.querySelector('.sale-item-product').addEventListener('change', updateSaleItemPrice);
     row.querySelector('.sale-item-unit').addEventListener('change', updateSaleItemPrice);
     row.querySelector('.sale-item-qty').addEventListener('input', updateSaleSummary);
+    row.querySelector('.sale-item-discount').addEventListener('input', updateSaleSummary);
     row.querySelector('.remove-item').addEventListener('click', () => {
         if (document.querySelectorAll('.sale-item-row').length > 1) { row.remove(); updateSaleSummary(); }
     });
@@ -891,23 +974,24 @@ function addSaleItemRow() {
     const container = document.getElementById('sale-items-container');
     container.insertAdjacentHTML('beforeend', buildSaleItemRow());
     const newRow = container.lastElementChild;
-    // Copy product options from first row
     const firstOptions = container.querySelector('.sale-item-product').innerHTML;
     newRow.querySelector('.sale-item-product').innerHTML = firstOptions;
     attachSaleItemEvents(newRow);
 }
 
-function updateSaleItemPrice() {
-    const row = this.closest('.sale-item-row');
+function priceForRow(row) {
     const option = row.querySelector('.sale-item-product').selectedOptions[0];
     const unitType = row.querySelector('.sale-item-unit').value;
+    if (!option || !option.value) return 0;
+    if (unitType === 'carton') return parseFloat(option.dataset.carton) || 0;
+    if (unitType === 'liter20') return parseFloat(option.dataset.liter20) || 0;
+    return 0;
+}
+
+function updateSaleItemPrice() {
+    const row = this.closest('.sale-item-row');
     const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
-    let price = 0;
-    if (option && option.value) {
-        if (unitType === 'unit') price = parseFloat(option.dataset.unit) || 0;
-        else if (unitType === 'carton') price = parseFloat(option.dataset.carton) || 0;
-        else if (unitType === 'liter20') price = parseFloat(option.dataset.liter20) || 0;
-    }
+    const price = priceForRow(row);
     row.querySelector('.sale-item-price').textContent = formatCurrency(price) + ' each';
     row.querySelector('.sale-item-total').textContent = formatCurrency(price * qty);
     updateSaleSummary();
@@ -916,25 +1000,21 @@ function updateSaleItemPrice() {
 function updateSaleSummary() {
     let subtotal = 0;
     document.querySelectorAll('.sale-item-row').forEach(row => {
-        const option = row.querySelector('.sale-item-product').selectedOptions[0];
-        const unitType = row.querySelector('.sale-item-unit').value;
         const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
-        let price = 0;
-        if (option && option.value) {
-            if (unitType === 'unit') price = parseFloat(option.dataset.unit) || 0;
-            else if (unitType === 'carton') price = parseFloat(option.dataset.carton) || 0;
-            else if (unitType === 'liter20') price = parseFloat(option.dataset.liter20) || 0;
-        }
-        const lineTotal = price * qty;
+        const price = priceForRow(row);
+        const lineDiscount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
+        const lineTotal = Math.max(0, (price * qty) - lineDiscount);
         row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal);
         subtotal += lineTotal;
     });
     const tax = subtotal * taxRate;
     const discount = parseFloat(document.getElementById('sale-discount')?.value) || 0;
-    const total = subtotal + tax - discount;
+    const discountType = document.getElementById('sale-discount-type')?.value || 'amount';
+    const discountAmount = discountType === 'percent' ? subtotal * (discount / 100) : discount;
+    const total = Math.max(0, subtotal + tax - discountAmount);
     document.getElementById('sale-subtotal').textContent = formatCurrency(subtotal);
     document.getElementById('sale-tax').textContent = formatCurrency(tax);
-    document.getElementById('sale-discount-display').textContent = formatCurrency(discount);
+    document.getElementById('sale-discount-display').textContent = formatCurrency(discountAmount);
     document.getElementById('sale-total').textContent = formatCurrency(total);
 }
 
@@ -949,12 +1029,9 @@ async function handleSaleSubmit(e) {
         if (!productId) { hasError = true; return; }
         const unitType = row.querySelector('.sale-item-unit').value;
         const qty = parseInt(row.querySelector('.sale-item-qty').value);
-        const option = row.querySelector('.sale-item-product').selectedOptions[0];
-        let price = 0;
-        if (unitType === 'unit') price = parseFloat(option.dataset.unit) || 0;
-        else if (unitType === 'carton') price = parseFloat(option.dataset.carton) || 0;
-        else if (unitType === 'liter20') price = parseFloat(option.dataset.liter20) || 0;
-        items.push({ product_id: productId, unit_type: unitType, quantity: qty, unit_price: price });
+        const price = priceForRow(row);
+        const discount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
+        items.push({ product_id: productId, unit_type: unitType, quantity: qty, unit_price: price, discount });
     });
     if (hasError || !items.length) { showToast('Please add at least one valid item', 'error'); return; }
     const data = {
@@ -962,6 +1039,7 @@ async function handleSaleSubmit(e) {
         warehouse_id: warehouseId, items,
         payment_method: document.getElementById('sale-payment-method').value,
         discount: parseFloat(document.getElementById('sale-discount').value) || 0,
+        discount_type: document.getElementById('sale-discount-type')?.value || 'amount',
         notes: document.getElementById('sale-notes').value.trim()
     };
     try {
@@ -1009,7 +1087,7 @@ function displayReceipt(receipt) {
                     ${(receipt.items || []).map(item => `
                     <tr>
                         <td>${escapeHtml(item.product_name)}</td>
-                        <td>${escapeHtml(item.unit_type)}</td>
+                        <td>${escapeHtml(formatSaleUnitType(item.unit_type))}</td>
                         <td>${item.quantity}</td>
                         <td>${formatCurrency(item.unit_price)}</td>
                         <td>${formatCurrency(item.line_total)}</td>
@@ -1057,189 +1135,6 @@ function confirmDeleteSale(id) {
             if (!res.ok) throw new Error(result.error);
             showToast('Sale deleted and stock restored', 'success');
             loadSales(); loadDashboard(); loadStock();
-        } catch (err) { showToast(err.message, 'error'); }
-    });
-}
-
-// ===================================================
-// PURCHASE ORDERS
-// ===================================================
-
-async function loadPurchaseOrders() {
-    try {
-        const status = document.getElementById('po-status-filter')?.value || '';
-        const warehouseId = document.getElementById('warehouse-filter')?.value || '';
-        const params = new URLSearchParams();
-        if (status) params.append('status', status);
-        if (warehouseId) params.append('warehouse_id', warehouseId);
-
-        const res = await fetchWithAuth(`${API_BASE}/purchase-orders?${params}`);
-        const orders = await res.json();
-        const tbody = document.querySelector('#purchase-orders-table tbody');
-
-        if (!orders.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h4>No Purchase Orders</h4><p>Click "New Purchase Order" to create one</p></td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = orders.map(o => `
-            <tr>
-                <td>${new Date(o.order_date).toLocaleDateString()}</td>
-                <td>${escapeHtml(o.supplier_name)}</td>
-                <td>—</td>
-                <td>${formatCurrency(o.total_cost)}</td>
-                <td><span class="status-badge status-${o.status}">${o.status}</span></td>
-                <td>${o.expected_date ? new Date(o.expected_date).toLocaleDateString() : '—'}</td>
-                <td>
-                    <button class="action-btn view" onclick="viewPO('${o.id}')">👁️ View</button>
-                    ${o.status !== 'received' && o.status !== 'cancelled' ? `<button class="action-btn edit" onclick="receivePO('${o.id}')">✅ Receive</button>` : ''}
-                    <button class="action-btn edit" onclick="editPOStatus('${o.id}','${o.status}')">✏️ Status</button>
-                    <button class="action-btn delete" onclick="confirmDeletePO('${o.id}')">🗑️ Delete</button>
-                </td>
-            </tr>`).join('');
-    } catch (err) {
-        console.error('PO error:', err);
-        showToast('Failed to load purchase orders', 'error');
-    }
-}
-
-async function openPOModal() {
-    document.getElementById('po-form').reset();
-    document.getElementById('po-items-container').innerHTML = buildPOItemRow();
-    await loadWarehouses();
-    await loadProductsForSelect();
-    document.getElementById('po-warehouse')?.addEventListener('change', loadProductsForSelect);
-    attachPOItemEvents(document.querySelector('.po-item-row'));
-    updatePOTotal();
-    showModal('purchase-order-modal');
-}
-
-function buildPOItemRow() {
-    return `<div class="po-item-row">
-        <select class="po-item-product" required><option value="">Select Product</option></select>
-        <select class="po-item-unit" required>
-            <option value="unit">Unit</option><option value="carton">Carton (12)</option><option value="liter20">20L Container</option>
-        </select>
-        <input type="number" class="po-item-qty" min="1" value="1" required>
-        <input type="number" class="po-item-cost" step="0.01" min="0" placeholder="Unit Cost" required>
-        <span class="po-item-total">${formatCurrency(0)}</span>
-        <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
-    </div>`;
-}
-
-function attachPOItemEvents(row) {
-    row.querySelector('.po-item-qty').addEventListener('input', updatePOItemTotal.bind(row.querySelector('.po-item-qty')));
-    row.querySelector('.po-item-cost').addEventListener('input', updatePOItemTotal.bind(row.querySelector('.po-item-cost')));
-    row.querySelector('.remove-item').addEventListener('click', () => {
-        if (document.querySelectorAll('.po-item-row').length > 1) { row.remove(); updatePOTotal(); }
-    });
-}
-
-function addPOItemRow() {
-    const container = document.getElementById('po-items-container');
-    container.insertAdjacentHTML('beforeend', buildPOItemRow());
-    const newRow = container.lastElementChild;
-    const firstOptions = container.querySelector('.po-item-product').innerHTML;
-    newRow.querySelector('.po-item-product').innerHTML = firstOptions;
-    attachPOItemEvents(newRow);
-}
-
-function updatePOItemTotal() {
-    const row = this.closest('.po-item-row');
-    const qty = parseInt(row.querySelector('.po-item-qty').value) || 0;
-    const cost = parseFloat(row.querySelector('.po-item-cost').value) || 0;
-    row.querySelector('.po-item-total').textContent = formatCurrency(qty * cost);
-    updatePOTotal();
-}
-
-function updatePOTotal() {
-    let total = 0;
-    document.querySelectorAll('.po-item-row').forEach(row => {
-        const qty = parseInt(row.querySelector('.po-item-qty').value) || 0;
-        const cost = parseFloat(row.querySelector('.po-item-cost').value) || 0;
-        const lineTotal = qty * cost;
-        row.querySelector('.po-item-total').textContent = formatCurrency(lineTotal);
-        total += lineTotal;
-    });
-    document.getElementById('po-total').textContent = formatCurrency(total);
-}
-
-async function handlePOSubmit(e) {
-    e.preventDefault();
-    const warehouseId = document.getElementById('po-warehouse')?.value;
-    if (!warehouseId) { showToast('Please select a warehouse', 'error'); return; }
-    const items = [];
-    let hasError = false;
-    document.querySelectorAll('.po-item-row').forEach(row => {
-        const productId = row.querySelector('.po-item-product').value;
-        const unitCost = parseFloat(row.querySelector('.po-item-cost').value);
-        if (!productId || isNaN(unitCost)) { hasError = true; return; }
-        items.push({
-            product_id: productId,
-            unit_type: row.querySelector('.po-item-unit').value,
-            quantity: parseInt(row.querySelector('.po-item-qty').value),
-            unit_cost: unitCost
-        });
-    });
-    if (hasError || !items.length) { showToast('Please add at least one valid item', 'error'); return; }
-    const data = {
-        supplier_name: document.getElementById('po-supplier-name').value.trim(),
-        supplier_contact: document.getElementById('po-supplier-contact').value.trim(),
-        warehouse_id: warehouseId,
-        expected_date: document.getElementById('po-expected-date').value || null,
-        items, notes: document.getElementById('po-notes').value.trim()
-    };
-    try {
-        const res = await fetchWithAuth(`${API_BASE}/purchase-orders`, { method: 'POST', body: JSON.stringify(data) });
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.error);
-        showToast('Purchase order created', 'success');
-        closeModal('purchase-order-modal');
-        loadPurchaseOrders();
-    } catch (err) { showToast(err.message, 'error'); }
-}
-
-async function viewPO(id) {
-    try {
-        const res = await fetchWithAuth(`${API_BASE}/purchase-orders/${id}`);
-        const po = await res.json();
-        alert(`PO: ${po.supplier_name}\nWarehouse: ${po.warehouse_name}\nStatus: ${po.status}\nTotal: ${formatCurrency(po.total_cost)}\nItems: ${po.items?.length || 0}`);
-    } catch (err) { showToast(err.message, 'error'); }
-}
-
-async function receivePO(id) {
-    showConfirm('Mark this purchase order as received? Stock will be updated.', async () => {
-        try {
-            const res = await fetchWithAuth(`${API_BASE}/purchase-orders/${id}/receive`, { method: 'PUT' });
-            const result = await res.json();
-            if (!res.ok) throw new Error(result.error);
-            showToast('Purchase order received and stock updated', 'success');
-            loadPurchaseOrders(); loadStock(); loadDashboard();
-        } catch (err) { showToast(err.message, 'error'); }
-    });
-}
-
-function editPOStatus(id, currentStatus) {
-    const statuses = ['pending', 'ordered', 'partial', 'received', 'cancelled'];
-    const newStatus = prompt(`Change status (current: ${currentStatus})\nOptions: ${statuses.join(', ')}`, currentStatus);
-    if (!newStatus || !statuses.includes(newStatus.toLowerCase())) return;
-    fetchWithAuth(`${API_BASE}/purchase-orders/${id}/status`, {
-        method: 'PUT', body: JSON.stringify({ status: newStatus.toLowerCase() })
-    }).then(r => r.json()).then(result => {
-        if (result.error) throw new Error(result.error);
-        showToast('Status updated', 'success');
-        loadPurchaseOrders();
-    }).catch(err => showToast(err.message, 'error'));
-}
-
-function confirmDeletePO(id) {
-    showConfirm('Delete this purchase order?', async () => {
-        try {
-            const res = await fetchWithAuth(`${API_BASE}/purchase-orders/${id}`, { method: 'DELETE' });
-            const result = await res.json();
-            if (!res.ok) throw new Error(result.error);
-            showToast('Purchase order deleted', 'success');
-            loadPurchaseOrders();
         } catch (err) { showToast(err.message, 'error'); }
     });
 }
@@ -1414,7 +1309,7 @@ async function handleCompanySettings(e) {
 
 async function handleSystemSettings(e) {
     e.preventDefault();
-    const fields = ['tax_rate', 'currency', 'low_stock_threshold_default'];
+    const fields = ['tax_rate', 'currency', 'low_stock_threshold_default', 'notifications_enabled', 'notifications_webhook_url'];
     try {
         for (const key of fields) {
             const el = document.getElementById(`setting-${key}`);
@@ -1515,6 +1410,183 @@ function handleGlobalSearch() {
     switchSection('products');
     const productSearch = document.getElementById('product-search');
     if (productSearch) { productSearch.value = query; loadProducts(); }
+}
+
+// ===================================================
+// TRANSFERS
+// ===================================================
+
+async function loadTransfers() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/transfers`);
+        const transfers = await res.json();
+        const tbody = document.querySelector('#transfers-table tbody');
+        if (!transfers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h4>No transfers yet</h4></td></tr>'; return; }
+        tbody.innerHTML = transfers.map(t => `
+            <tr>
+                <td>${new Date(t.created_at).toLocaleString()}</td>
+                <td>${escapeHtml(t.product_name)}</td>
+                <td>${escapeHtml(t.from_warehouse_name)}</td>
+                <td>${escapeHtml(t.to_warehouse_name)}</td>
+                <td>${escapeHtml(formatSaleUnitType(t.unit_type))}</td>
+                <td>${t.quantity}</td>
+                <td>${escapeHtml(t.created_by_name || '—')}</td>
+            </tr>`).join('');
+    } catch (err) { console.error(err); showToast('Failed to load transfers', 'error'); }
+}
+
+async function openTransferModal() {
+    document.getElementById('transfer-form').reset();
+    await loadWarehouses();
+    const products = await (await fetchWithAuth(`${API_BASE}/products`)).json();
+    document.getElementById('transfer-product').innerHTML = '<option value="">Select Product</option>' + products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    showModal('transfer-modal');
+}
+
+async function handleTransferSubmit(e) {
+    e.preventDefault();
+    const data = {
+        product_id: document.getElementById('transfer-product').value,
+        from_warehouse_id: document.getElementById('transfer-from').value,
+        to_warehouse_id: document.getElementById('transfer-to').value,
+        unit_type: document.getElementById('transfer-unit-type').value,
+        quantity: parseInt(document.getElementById('transfer-quantity').value),
+        notes: document.getElementById('transfer-notes').value.trim()
+    };
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/transfers`, { method: 'POST', body: JSON.stringify(data) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
+        showToast('Stock transferred', 'success');
+        closeModal('transfer-modal');
+        loadTransfers(); loadStock(); loadDashboard();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ===================================================
+// RETURNS
+// ===================================================
+
+async function loadReturns() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/returns`);
+        const returns = await res.json();
+        const tbody = document.querySelector('#returns-table tbody');
+        if (!returns.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><h4>No returns yet</h4></td></tr>'; return; }
+        tbody.innerHTML = returns.map(r => `<tr>
+            <td>${new Date(r.created_at).toLocaleString()}</td>
+            <td>${escapeHtml(r.product_name)}</td>
+            <td>${escapeHtml(formatSaleUnitType(r.unit_type))}</td>
+            <td>${r.quantity}</td>
+            <td>${formatCurrency(r.line_total)}</td>
+            <td>${escapeHtml(r.reason || '—')}</td>
+            <td>${escapeHtml(r.created_by_name || '—')}</td>
+        </tr>`).join('');
+    } catch (err) { console.error(err); showToast('Failed to load returns', 'error'); }
+}
+
+async function openReturnModal(saleId) {
+    document.getElementById('return-form').reset();
+    const sales = await (await fetchWithAuth(`${API_BASE}/sales?limit=100`)).json();
+    document.getElementById('return-sale').innerHTML = '<option value="">Select Sale</option>' + sales.map(s => `<option value="${s.id}">#${s.id.slice(0,8)} — ${escapeHtml(s.customer_name || 'Walk-in')} — ${formatCurrency(s.total)}</option>`).join('');
+    if (saleId) document.getElementById('return-sale').value = saleId;
+    document.getElementById('return-sale').addEventListener('change', async function () {
+        const id = this.value;
+        const container = document.getElementById('return-items-container');
+        if (!id) { container.innerHTML = ''; return; }
+        const sale = await (await fetchWithAuth(`${API_BASE}/sales/${id}`)).json();
+        container.innerHTML = (sale.items || []).map((item, i) => `
+            <div class="form-row" style="margin-bottom:8px;align-items:center;">
+                <div class="form-group" style="margin:0;"><label>${escapeHtml(item.product_name)} (${escapeHtml(formatSaleUnitType(item.unit_type))}, sold ${item.quantity})</label></div>
+                <div class="form-group" style="margin:0;"><input type="number" class="return-qty" min="0" max="${item.quantity}" value="0" data-product="${item.product_id}" data-unit="${item.unit_type}"></div>
+            </div>`).join('') || '<p>No items in this sale</p>';
+    });
+    showModal('return-modal');
+}
+
+async function handleReturnSubmit(e) {
+    e.preventDefault();
+    const saleId = document.getElementById('return-sale').value;
+    const items = [];
+    document.querySelectorAll('.return-qty').forEach(input => {
+        const qty = parseInt(input.value);
+        if (qty > 0) items.push({ product_id: input.dataset.product, unit_type: input.dataset.unit, quantity: qty });
+    });
+    if (!saleId || !items.length) { showToast('Select a sale and at least one item to return', 'error'); return; }
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/returns`, { method: 'POST', body: JSON.stringify({ sale_id: saleId, items, reason: document.getElementById('return-reason').value.trim() }) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
+        showToast('Return processed', 'success');
+        closeModal('return-modal');
+        loadReturns(); loadStock(); loadDashboard();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ===================================================
+// AUDIT LOG
+// ===================================================
+
+async function loadAudit() {
+    try {
+        const search = document.getElementById('audit-search')?.value || '';
+        const res = await fetchWithAuth(`${API_BASE}/audit?search=${encodeURIComponent(search)}`);
+        const logs = await res.json();
+        const tbody = document.querySelector('#audit-table tbody');
+        if (!logs.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No activity recorded</td></tr>'; return; }
+        tbody.innerHTML = logs.map(l => `<tr>
+            <td>${new Date(l.created_at).toLocaleString()}</td>
+            <td>${escapeHtml(l.user_name || '—')}</td>
+            <td>${escapeHtml(l.action)}</td>
+            <td>${escapeHtml(l.entity_type || '')} ${escapeHtml(l.entity_id ? l.entity_id.slice(0,8) : '')}</td>
+            <td>${escapeHtml(l.details || '')}</td>
+        </tr>`).join('');
+    } catch (err) { console.error(err); showToast('Failed to load audit log', 'error'); }
+}
+
+async function exportSales() {
+    try {
+        const dateFrom = document.getElementById('sale-date-from')?.value || '';
+        const dateTo = document.getElementById('sale-date-to')?.value || '';
+        const warehouseId = document.getElementById('warehouse-filter')?.value || '';
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('start_date', dateFrom);
+        if (dateTo) params.append('end_date', dateTo);
+        if (warehouseId) params.append('warehouse_id', warehouseId);
+        const res = await fetch(`${API_BASE}/sales/export?${params}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Export failed'); }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `VEEMENZ-Sales-${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a); a.click(); URL.revokeObjectURL(url); document.body.removeChild(a);
+        showToast('Sales exported', 'success');
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+// ===================================================
+// REAL-TIME UPDATES (WebSockets)
+// ===================================================
+
+function initRealtime() {
+    if (typeof io === 'undefined') return;
+    const socket = io();
+    socket.on('data-changed', () => {
+        const active = document.querySelector('.nav-item.active')?.dataset.section || 'dashboard';
+        loadDashboard();
+        switch (active) {
+            case 'dashboard': break;
+            case 'stock': loadStock(); break;
+            case 'products': loadProducts(); break;
+            case 'customers': loadCustomers(); break;
+            case 'sales': loadSales(); break;
+            case 'transfers': loadTransfers(); break;
+            case 'returns': loadReturns(); break;
+            case 'audit': loadAudit(); break;
+            case 'reports': loadReports(); break;
+            case 'alerts': loadAlerts(); break;
+        }
+    });
 }
 
 // ===================================================

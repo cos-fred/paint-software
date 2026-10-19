@@ -1,8 +1,22 @@
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 const { getDb } = require('./database');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'paint-software-secret-key-change-in-production';
 const JWT_EXPIRES_IN = '7d';
+
+function loadJwtSecret() {
+    if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+    const secretPath = path.join(__dirname, '.jwt-secret');
+    try {
+        if (fs.existsSync(secretPath)) return fs.readFileSync(secretPath, 'utf8').trim();
+    } catch (e) { /* ignore */ }
+    const generated = require('crypto').randomBytes(48).toString('hex');
+    try { fs.writeFileSync(secretPath, generated, { mode: 0o600 }); } catch (e) { /* ignore */ }
+    return generated;
+}
+
+const JWT_SECRET = loadJwtSecret();
 
 function generateToken(user) {
     return jwt.sign(
@@ -44,16 +58,12 @@ function requireAdmin(req, res, next) {
     next();
 }
 
-function getUserById(userId) {
-    const db = getDb();
-    return db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(userId);
-}
+const VALID_ROLES = ['admin', 'user'];
 
 module.exports = {
     generateToken,
     verifyToken,
     authenticateToken,
     requireAdmin,
-    getUserById,
-    JWT_SECRET
+    VALID_ROLES
 };

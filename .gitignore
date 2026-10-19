@@ -1,38 +1,35 @@
 # Dependencies
 node_modules/
 
-# Environment files
+# Environment & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+.jwt-secret
 
-# Database
+# Database files
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+
+# Backups
+backups/
 
 # Logs
 logs
 *.log
 npm-debug.log*
 
-# Build outputs
-dist/
-build/
-
-# IDE
+# OS / IDE
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Testing
-coverage/
-
-# Temporary files
+# Temporary
 *.tmp
 *.temp

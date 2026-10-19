@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { generateToken, authenticateToken } = require('../auth');
+const { generateToken, authenticateToken, VALID_ROLES } = require('../auth');
 
 const router = express.Router();
 const db = getDb();
@@ -49,14 +49,16 @@ router.post('/register', authenticateToken, (req, res) => {
         if (!username || !email || !password) {
             return res.status(400).json({ error: 'Username, email, and password are required' });
         }
+        const userRole = role || 'user';
+        if (!VALID_ROLES.includes(userRole)) return res.status(400).json({ error: 'Invalid role' });
 
         const passwordHash = bcrypt.hashSync(password, 10);
         const id = uuidv4();
 
         db.prepare('INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)')
-            .run(id, username, email, passwordHash, role || 'user');
+            .run(id, username, email, passwordHash, userRole);
 
-        res.status(201).json({ id, username, email, role: role || 'user' });
+        res.status(201).json({ id, username, email, role: userRole });
     } catch (err) {
         if (err.message.includes('UNIQUE')) {
             return res.status(400).json({ error: 'Username or email already exists' });
