@@ -1,4 +1,14 @@
 require('dotenv').config();
+
+// Log any fatal startup error clearly so Railway shows the real reason.
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] uncaughtException:', err && err.stack ? err.stack : err);
+    process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL] unhandledRejection:', reason);
+});
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -67,18 +77,24 @@ app.use((err, req, res, next) => {
 });
 
 function startServer() {
-    initializeDatabase();
-    console.log('Database initialized');
-    startBackupScheduler();
+    try {
+        console.log(`[startup] DB_PATH = ${process.env.DB_PATH || '(default ./paint_inventory.db)'}`);
+        initializeDatabase();
+        console.log('Database initialized');
+        startBackupScheduler();
 
-    const http = require('http');
-    const server = http.createServer(app);
-    initRealtime(server);
+        const http = require('http');
+        const server = http.createServer(app);
+        initRealtime(server);
 
-    server.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-        console.log(`API available at http://localhost:${PORT}/api`);
-    });
+        server.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+            console.log(`API available at /api`);
+        });
+    } catch (err) {
+        console.error('[FATAL] startup failed:', err && err.stack ? err.stack : err);
+        process.exit(1);
+    }
 }
 
 startServer();
