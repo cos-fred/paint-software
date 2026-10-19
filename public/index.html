@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VEEMENZ - Inventory Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="login-header">
+                    <div class="logo">VEEMENZ</div>
+                    <h1>VEEMENZ</h1>
+                    <p>Inventory & Sales Tracker</p>
+                </div>
+                <form id="login-form" class="login-form">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" required autocomplete="username" placeholder="Enter username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Enter password">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="main-screen" class="screen">
+            <header class="header">
+                <div class="header-left">
+                    <button id="sidebar-toggle" class="btn btn-icon" aria-label="Toggle menu">☰</button>
+                    <div class="logo">VEEMENZ</div>
+                    <h1>VEEMENZ</h1>
+                </div>
+                <div class="header-right">
+                    <div class="search-box">
+                        <input type="text" id="global-search" placeholder="Search products, customers..." aria-label="Global search">
+                    </div>
+                    <div class="warehouse-selector">
+                        <label for="warehouse-filter" style="display: none;">Warehouse</label>
+                        <select id="warehouse-filter" class="filter-select" style="min-width: 180px;">
+                            <option value="">All Warehouses</option>
+                        </select>
+                    </div>
+                    <div id="alert-badge" class="alert-badge" style="display: none;">
+                        <span id="alert-count">0</span>
+                    </div>
+                    <div class="user-menu">
+                        <button id="user-menu-btn" class="btn btn-icon">👤</button>
+                        <div id="user-dropdown" class="dropdown">
+                            <div class="dropdown-header">
+                                <span id="user-name"></span>
+                                <span id="user-role" class="role-badge"></span>
+                            </div>
+                            <a href="#" data-section="profile">Profile</a>
+                            <a href="#" data-section="settings" id="settings-link">Settings</a>
+                            <hr>
+                            <button id="logout-btn" class="btn btn-danger btn-full">Logout</button>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="layout">
+                <aside id="sidebar" class="sidebar">
+                    <nav class="nav-menu">
+                        <a href="#" class="nav-item active" data-section="dashboard">
+                            <span class="nav-icon">📊</span>
+                            <span>Dashboard</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="stock">
+                            <span class="nav-icon">🏭</span>
+                            <span>Stock</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="products">
+                            <span class="nav-icon">📦</span>
+                            <span>Products</span>
+                            <span id="low-stock-badge" class="badge" style="display: none;"></span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="customers">
+                            <span class="nav-icon">👥</span>
+                            <span>Customers</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="sales">
+                            <span class="nav-icon">💰</span>
+                            <span>Sales</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="purchase-orders">
+                            <span class="nav-icon">📋</span>
+                            <span>Purchase Orders</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="reports">
+                            <span class="nav-icon">📈</span>
+                            <span>Reports</span>
+                        </a>
+                        <a href="#" class="nav-item" data-section="alerts">
+                            <span class="nav-icon">⚠️</span>
+                            <span>Alerts</span>
+                            <span id="alert-badge-nav" class="badge" style="display: none;"></span>
+                        </a>
+                    </nav>
+                </aside>
+
+                <main id="main-content" class="main-content">
+                    <section id="dashboard-section" class="content-section active">
+                        <div class="section-header">
+                            <h2>Dashboard</h2>
+                        </div>
+                        <div class="stats-grid" id="dashboard-stats">
+                        </div>
+                        <div class="dashboard-grid">
+                            <div class="card">
+                                <h3>Low Stock Alerts</h3>
+                                <div id="low-stock-list"></div>
+                            </div>
+                            <div class="card">
+                                <h3>Recent Sales</h3>
+                                <div id="recent-sales-list"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="stock-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Stock Overview</h2>
+                            <div class="header-actions">
+                                <button class="btn btn-primary" id="export-stock-btn">Export to Excel</button>
+                            </div>
+                        </div>
+                        <div class="filters">
+                            <select id="stock-warehouse-filter" class="filter-select">
+                                <option value="">All Warehouses</option>
+                            </select>
+                            <label class="filter-checkbox">
+                                <input type="checkbox" id="stock-show-low-only"> Low Stock Only
+                            </label>
+                        </div>
+                        <div class="table-container">
+                            <table id="stock-table">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th>Warehouse</th>
+                                        <th>Unit Price</th>
+                                        <th>Carton Price (12)</th>
+                                        <th>20L Price</th>
+                                        <th>Unit Stock</th>
+                                        <th>Carton Stock</th>
+                                        <th>20L Stock</th>
+                                        <th>Threshold</th>
+                                        <th>Total Value</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="products-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Products</h2>
+                            <button class="btn btn-primary" id="add-product-btn">Add Product</button>
+                        </div>
+                        <div class="filters">
+                            <input type="text" id="product-search" placeholder="Search products..." class="filter-input">
+                            <label class="filter-checkbox">
+                                <input type="checkbox" id="show-low-stock-only"> Low Stock Only
+                            </label>
+                        </div>
+                        <div class="table-container">
+                            <table id="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Unit Price</th>
+                                        <th>Carton Price (12)</th>
+                                        <th>20L Price</th>
+                                        <th>Total Unit Stock</th>
+                                        <th>Total Carton Stock</th>
+                                        <th>Total 20L Stock</th>
+                                        <th>Threshold</th>
+                                        <th>Total Value</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="customers-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Customers</h2>
+                            <button class="btn btn-primary" id="add-customer-btn">Add Customer</button>
+                        </div>
+                        <div class="filters">
+                            <input type="text" id="customer-search" placeholder="Search customers..." class="filter-input">
+                        </div>
+                        <div class="table-container">
+                            <table id="customers-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Email</th>
+                                        <th>Phone</th>
+                                        <th>Address</th>
+                                        <th>Purchases</th>
+                                        <th>Total Spent</th>
+                                        <th>Last Purchase</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="sales-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Sales</h2>
+                            <button class="btn btn-primary" id="new-sale-btn">New Sale</button>
+                        </div>
+                        <div class="filters">
+                            <input type="text" id="sale-search" placeholder="Search sales..." class="filter-input">
+                            <select id="sale-status-filter" class="filter-select">
+                                <option value="">All Status</option>
+                                <option value="completed">Completed</option>
+                                <option value="pending">Pending</option>
+                                <option value="cancelled">Cancelled</option>
+                                <option value="refunded">Refunded</option>
+                            </select>
+                            <input type="date" id="sale-date-from" class="filter-input">
+                            <input type="date" id="sale-date-to" class="filter-input">
+                        </div>
+                        <div class="table-container">
+                            <table id="sales-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Customer</th>
+                                        <th>Items</th>
+                                        <th>Subtotal</th>
+                                        <th>Tax</th>
+                                        <th>Discount</th>
+                                        <th>Total</th>
+                                        <th>Payment</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="purchase-orders-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Purchase Orders</h2>
+                            <button class="btn btn-primary" id="new-po-btn">New Purchase Order</button>
+                        </div>
+                        <div class="filters">
+                            <select id="po-status-filter" class="filter-select">
+                                <option value="">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="ordered">Ordered</option>
+                                <option value="partial">Partial</option>
+                                <option value="received">Received</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </div>
+                        <div class="table-container">
+                            <table id="purchase-orders-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Supplier</th>
+                                        <th>Items</th>
+                                        <th>Total Cost</th>
+                                        <th>Status</th>
+                                        <th>Expected</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="reports-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Reports</h2>
+                        </div>
+                        <div class="reports-grid">
+                            <div class="card">
+                                <h3>Inventory Value by Category</h3>
+                                <div class="table-container">
+                                    <table id="category-report-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Products</th>
+                                                <th>Total Value</th>
+                                                <th>Total Items</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <h3>Top Selling Products</h3>
+                                <div class="table-container">
+                                    <table id="top-products-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Product</th>
+                                                <th>Category</th>
+                                                <th>Qty Sold</th>
+                                                <th>Revenue</th>
+                                                <th>Sales Count</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <h3>Top Customers</h3>
+                                <div class="table-container">
+                                    <table id="top-customers-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Customer</th>
+                                                <th>Purchases</th>
+                                                <th>Total Spent</th>
+                                                <th>Avg Purchase</th>
+                                                <th>Last Purchase</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <h3>Daily Sales (Last 30 Days)</h3>
+                                <div id="daily-sales-chart" class="chart-container"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="alerts-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Alerts</h2>
+                            <div class="header-actions">
+                                <button class="btn btn-secondary" id="mark-all-read-btn">Mark All Read</button>
+                            </div>
+                        </div>
+                        <div class="filters">
+                            <label class="filter-checkbox">
+                                <input type="checkbox" id="show-unread-only" checked> Unread Only
+                            </label>
+                        </div>
+                        <div class="table-container">
+                            <table id="alerts-table">
+                                <thead>
+                                    <tr>
+                                        <th>Type</th>
+                                        <th>Product</th>
+                                        <th>Message</th>
+                                        <th>Severity</th>
+                                        <th>Date</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="settings-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Settings</h2>
+                        </div>
+                        <div class="settings-grid">
+                            <div class="card">
+                                <h3>Company Information</h3>
+                                <form id="company-settings-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Company Name</label>
+                                            <input type="text" id="setting-company_name" name="company_name">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Phone</label>
+                                            <input type="text" id="setting-company_phone" name="company_phone">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Email</label>
+                                            <input type="email" id="setting-company_email" name="company_email">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Address</label>
+                                        <textarea id="setting-company_address" name="company_address" rows="2"></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Save Company Info</button>
+                                </form>
+                            </div>
+                            <div class="card">
+                                <h3>System Settings</h3>
+                                <form id="system-settings-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Tax Rate (%)</label>
+                                            <input type="number" id="setting-tax_rate" name="tax_rate" step="0.01" min="0" max="100">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Currency</label>
+                                            <input type="text" id="setting-currency" name="currency" maxlength="3" value="GHS">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Default Low Stock Threshold</label>
+                                        <input type="number" id="setting-low_stock_threshold_default" name="low_stock_threshold_default" min="1" value="10">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Save System Settings</button>
+                                </form>
+                            </div>
+                            <div class="card" id="user-management-card" style="display: none;">
+                                <h3>User Management</h3>
+                                <div class="table-container">
+                                    <table id="users-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Username</th>
+                                                <th>Email</th>
+                                                <th>Role</th>
+                                                <th>Created</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <button class="btn btn-primary" id="add-user-btn">Add User</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="profile-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Profile</h2>
+                        </div>
+                        <div class="card">
+                            <form id="profile-form">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Username</label>
+                                        <input type="text" id="profile-username" disabled>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Email</label>
+                                        <input type="email" id="profile-email">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>Role</label>
+                                    <input type="text" id="profile-role" disabled>
+                                </div>
+                                <button type="button" class="btn btn-secondary" id="change-password-btn">Change Password</button>
+                            </form>
+                        </div>
+                    </section>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <div id="product-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="product-modal-title">Add Product</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="product-form">
+                <input type="hidden" id="product-id">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" id="product-name" required placeholder="Product name">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="product-description" placeholder="Optional description">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Unit Price *</label>
+                        <input type="number" id="product-unit-price" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Carton Price (12 units)</label>
+                        <input type="number" id="product-carton-price" step="0.01" min="0" placeholder="Auto: 12 × Unit">
+                        <small>Auto-calculated as 12 × Unit Price if empty</small>
+                    </div>
+                    <div class="form-group">
+                        <label>20L Container Price</label>
+                        <input type="number" id="product-liter20-price" step="0.01" min="0" placeholder="0.00">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Initial Unit Stock</label>
+                        <input type="number" id="product-unit-stock" min="0" value="0" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Initial Carton Stock</label>
+                        <input type="number" id="product-carton-stock" min="0" value="0" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Initial 20L Stock</label>
+                        <input type="number" id="product-liter20-stock" min="0" value="0" placeholder="0">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Low Stock Threshold</label>
+                        <input type="number" id="product-threshold" min="1" value="10" placeholder="10">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Product</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="stock-adjust-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Adjust Stock</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="stock-adjust-form">
+                <input type="hidden" id="stock-adjust-product-id">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Product</label>
+                        <input type="text" id="stock-adjust-product-name" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>Warehouse *</label>
+                        <select id="stock-adjust-warehouse" required>
+                            <option value="">Select Warehouse</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Unit Type *</label>
+                        <select id="stock-adjust-unit-type" required>
+                            <option value="unit">Unit</option>
+                            <option value="carton">Carton (12)</option>
+                            <option value="liter20">20L Container</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Current Stock</label>
+                        <input type="number" id="stock-adjust-current" disabled>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Movement Type *</label>
+                        <select id="stock-adjust-movement-type" required>
+                            <option value="in">Stock In (+)</option>
+                            <option value="out">Stock Out (-)</option>
+                            <option value="adjustment_positive">Adjustment (+)</option>
+                            <option value="adjustment_negative">Adjustment (-)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Quantity *</label>
+                        <input type="number" id="stock-adjust-quantity" min="1" required placeholder="Quantity">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="stock-adjust-notes" rows="2" placeholder="Reason for adjustment"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Adjustment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="customer-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="customer-modal-title">Add Customer</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="customer-form">
+                <input type="hidden" id="customer-id">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" id="customer-name" required placeholder="Customer name">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="customer-email" placeholder="email@example.com">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Phone</label>
+                        <input type="text" id="customer-phone" placeholder="+233 XX XXX XXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>Tax ID</label>
+                        <input type="text" id="customer-tax-id" placeholder="Optional">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Address</label>
+                    <textarea id="customer-address" rows="2" placeholder="Street address"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>City</label>
+                        <input type="text" id="customer-city" placeholder="City">
+                    </div>
+                    <div class="form-group">
+                        <label>Region</label>
+                        <input type="text" id="customer-state" placeholder="Region/State">
+                    </div>
+                    <div class="form-group">
+                        <label>Postal Code</label>
+                        <input type="text" id="customer-postal-code" placeholder="Postal code">
+                    </div>
+                    <div class="form-group">
+                        <label>Country</label>
+                        <input type="text" id="customer-country" placeholder="Ghana" value="Ghana">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="customer-notes" rows="2" placeholder="Additional notes"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Customer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="sale-modal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>New Sale</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="sale-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Customer</label>
+                        <select id="sale-customer">
+                            <option value="">Walk-in Customer</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Warehouse *</label>
+                        <select id="sale-warehouse" required>
+                            <option value="">Select Warehouse</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Payment Method</label>
+                        <select id="sale-payment-method">
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="transfer">Bank Transfer</option>
+                            <option value="momo">Mobile Money</option>
+                            <option value="credit">Credit</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Items</label>
+                    <div id="sale-items-container">
+                        <div class="sale-item-row">
+                            <select class="sale-item-product" required>
+                                <option value="">Select Product</option>
+                            </select>
+                            <select class="sale-item-unit" required>
+                                <option value="unit">Unit</option>
+                                <option value="carton">Carton (12)</option>
+                                <option value="liter20">20L Container</option>
+                            </select>
+                            <input type="number" class="sale-item-qty" min="1" value="1" required>
+                            <span class="sale-item-price"></span>
+                            <span class="sale-item-total">₵0.00</span>
+                            <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="add-sale-item">+ Add Item</button>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Discount</label>
+                        <input type="number" id="sale-discount" step="0.01" min="0" value="0" placeholder="0.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <input type="text" id="sale-notes" placeholder="Optional notes">
+                    </div>
+                </div>
+                <div class="sale-summary">
+                    <div class="summary-row"><span>Subtotal:</span> <span id="sale-subtotal">₵0.00</span></div>
+                    <div class="summary-row"><span>Tax:</span> <span id="sale-tax">₵0.00</span></div>
+                    <div class="summary-row"><span>Discount:</span> <span id="sale-discount-display">₵0.00</span></div>
+                    <div class="summary-row total"><span>Total:</span> <span id="sale-total">₵0.00</span></div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Complete Sale</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="purchase-order-modal" class="modal modal-large">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>New Purchase Order</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="po-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Supplier Name *</label>
+                        <input type="text" id="po-supplier-name" required placeholder="Supplier name">
+                    </div>
+                    <div class="form-group">
+                        <label>Supplier Contact</label>
+                        <input type="text" id="po-supplier-contact" placeholder="Phone/Email">
+                    </div>
+                    <div class="form-group">
+                        <label>Warehouse *</label>
+                        <select id="po-warehouse" required>
+                            <option value="">Select Warehouse</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Expected Date</label>
+                    <input type="date" id="po-expected-date">
+                </div>
+                <div class="form-group">
+                    <label>Items</label>
+                    <div id="po-items-container">
+                        <div class="po-item-row">
+                            <select class="po-item-product" required>
+                                <option value="">Select Product</option>
+                            </select>
+                            <select class="po-item-unit" required>
+                                <option value="unit">Unit</option>
+                                <option value="carton">Carton (12)</option>
+                                <option value="liter20">20L Container</option>
+                            </select>
+                            <input type="number" class="po-item-qty" min="1" value="1" required>
+                            <input type="number" class="po-item-cost" step="0.01" min="0" placeholder="Unit Cost" required>
+                            <span class="po-item-total">₵0.00</span>
+                            <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="add-po-item">+ Add Item</button>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="po-notes" rows="2" placeholder="Optional notes"></textarea>
+                </div>
+                <div class="po-summary">
+                    <div class="summary-row total"><span>Total Cost:</span> <span id="po-total">₵0.00</span></div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Purchase Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="receipt-modal" class="modal modal-large">
+        <div class="modal-content receipt-content">
+            <div class="modal-header">
+                <h3>Receipt</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div id="receipt-content"></div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="print-receipt-btn">Print</button>
+                <button type="button" class="btn btn-primary modal-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Confirm</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <p id="confirm-message"></p>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirm-ok">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="password-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Change Password</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="password-form">
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" id="current-password" required placeholder="Current password">
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="new-password" required minlength="6" placeholder="New password (min 6 chars)">
+                </div>
+                <div class="form-group">
+                    <label>Confirm New Password</label>
+                    <input type="password" id="confirm-password" required placeholder="Confirm new password">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Change Password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="user-modal-title">Add User</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="user-form">
+                <input type="hidden" id="user-id">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Username *</label>
+                        <input type="text" id="user-username" required placeholder="Username">
+                    </div>
+                    <div class="form-group">
+                        <label>Email *</label>
+                        <input type="email" id="user-email" required placeholder="email@example.com">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Password *</label>
+                        <input type="password" id="user-password" required minlength="6" placeholder="Password (min 6 chars)">
+                    </div>
+                    <div class="form-group">
+                        <label>Role</label>
+                        <select id="user-role">
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

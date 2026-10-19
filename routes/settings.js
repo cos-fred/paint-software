@@ -1,0 +1,64 @@
+const express = require('express');
+const { getDb } = require('../database');
+const { authenticateToken, requireAdmin } = require('../auth');
+
+const router = express.Router();
+const db = getDb();
+
+router.use(authenticateToken);
+router.use(requireAdmin);
+
+router.get('/', (req, res) => {
+    try {
+        const rows = db.prepare('SELECT * FROM settings ORDER BY key').all();
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/:key', (req, res) => {
+    try {
+        const row = db.prepare('SELECT * FROM settings WHERE key = ?').get(req.params.key);
+        if (!row) return res.status(404).json({ error: 'Setting not found' });
+        res.json(row);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.put('/:key', (req, res) => {
+    try {
+        const { value, description } = req.body;
+        
+        if (value === undefined) {
+            return res.status(400).json({ error: 'Value is required' });
+        }
+
+        db.prepare(
+            `INSERT INTO settings (key, value, description) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = ?, description = COALESCE(?, description)`
+        ).run(req.params.key, value, description, value, description);
+
+        res.json({ message: 'Setting saved', key: req.params.key, value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.delete('/:key', (req, res) => {
+    try {
+        const protectedKeys = ['company_name', 'company_address', 'tax_rate', 'currency'];
+        if (protectedKeys.includes(req.params.key)) {
+            return res.status(400).json({ error: 'Cannot delete protected setting' });
+        }
+
+        const result = db.prepare('DELETE FROM settings WHERE key = ?').run(req.params.key);
+        if (result.changes === 0) return res.status(404).json({ error: 'Setting not found' });
+        res.json({ message: 'Setting deleted' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+module.exports = router;
