@@ -49,8 +49,9 @@ The code is already prepared:
    Open it → login with `admin` / `admin123` (then change the password).
 
 > Note: `better-sqlite3` ships prebuilt binaries, so it usually installs cleanly.
-> If the build fails on native module compile, switch your Railway builder to
-> **Dockerfile** and use the `node:20-alpine` base image.
+> A `Dockerfile`, `.nvmrc` and `nixpacks.toml` are already included to pin Node 20
+> and provide native build tools. If Nixpacks fails on the native module, switch
+> your Railway builder to **Dockerfile** (it will use the included Dockerfile).
 
 ---
 
