@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken } = require('../auth');
+const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { notifyLowStock } = require('../services/notifications');
 
@@ -50,7 +50,7 @@ router.get('/', (req, res) => {
 
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -58,7 +58,7 @@ router.get('/warehouses', (req, res) => {
     try {
         res.json(db.prepare('SELECT id, name, code, address, city, country, is_active FROM warehouses WHERE is_active = 1 ORDER BY name').all());
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -78,7 +78,7 @@ router.get('/low-stock', (req, res) => {
         query += ' GROUP BY p.id HAVING COALESCE(SUM(ps.carton_stock), 0) <= p.low_stock_threshold OR COALESCE(SUM(ps.liter20_stock), 0) <= p.low_stock_threshold ORDER BY p.name';
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -104,11 +104,11 @@ router.get('/:id', (req, res) => {
         }
         res.json(row);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold, warehouse_id, carton_stock, liter20_stock } = req.body;
 
@@ -149,11 +149,11 @@ router.post('/', (req, res) => {
         logAudit(req.user.id, 'product.create', 'product', id, { name });
         res.status(201).json({ id, name, unit_price, carton_price: calculatedCartonPrice, liter20_price: liter20_price || 0, warehouse_id: targetWarehouseId, carton_stock: initialCartons, liter20_stock: initialLiter20 });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAdmin, (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold } = req.body;
         const calculatedCartonPrice = carton_price !== undefined ? carton_price : (unit_price !== undefined ? unit_price * 12 : undefined);
@@ -180,11 +180,11 @@ router.put('/:id', (req, res) => {
         logAudit(req.user.id, 'product.update', 'product', req.params.id);
         res.json({ message: 'Product updated successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAdmin, (req, res) => {
     try {
         const productId = req.params.id;
         const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
@@ -204,11 +204,11 @@ router.delete('/:id', (req, res) => {
         logAudit(req.user.id, 'product.delete', 'product', productId, { name: product.name });
         res.json({ message: 'Product deleted successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.post('/:id/stock-movement', (req, res) => {
+router.post('/:id/stock-movement', requireAdmin, (req, res) => {
     try {
         const { movement_type, unit_type, quantity, warehouse_id, reference_id, reference_type, notes } = req.body;
         const productId = req.params.id;
@@ -239,7 +239,7 @@ router.post('/:id/stock-movement', (req, res) => {
         logAudit(req.user.id, 'stock.adjust', 'product', productId, { movement_type, unit_type, quantity, warehouse_id });
         res.json({ message: 'Stock movement recorded', new_stock: newStock });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -264,7 +264,7 @@ router.get('/:id/movements', (req, res) => {
         params.push(parseInt(limit), parseInt(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -309,7 +309,7 @@ router.get('/stock/export', (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('Export error:', err);
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

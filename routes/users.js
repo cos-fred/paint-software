@@ -15,7 +15,7 @@ router.get('/', (req, res) => {
         const rows = db.prepare('SELECT id, username, email, role, created_at FROM users ORDER BY created_at DESC').all();
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -25,7 +25,7 @@ router.get('/:id', (req, res) => {
         if (!row) return res.status(404).json({ error: 'User not found' });
         res.json(row);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -50,7 +50,7 @@ router.post('/', (req, res) => {
         if (err.message.includes('UNIQUE')) {
             return res.status(400).json({ error: 'Username or email already exists' });
         }
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -85,7 +85,7 @@ router.put('/:id', (req, res) => {
         if (err.message.includes('UNIQUE')) {
             return res.status(400).json({ error: 'Username or email already exists' });
         }
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -101,7 +101,7 @@ router.delete('/:id', (req, res) => {
         if (result.changes === 0) return res.status(404).json({ error: 'User not found' });
         res.json({ message: 'User deleted successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

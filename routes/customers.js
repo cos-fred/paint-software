@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken } = require('../auth');
+const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.get('/', (req, res) => {
         params.push(parseInt(limit), parseInt(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -35,7 +35,7 @@ router.get('/:id', (req, res) => {
         if (!row) return res.status(404).json({ error: 'Customer not found' });
         res.json(row);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -50,7 +50,7 @@ router.get('/:id/purchases', (req, res) => {
         params.push(parseInt(limit), parseInt(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -64,7 +64,7 @@ router.post('/', (req, res) => {
         logAudit(req.user.id, 'customer.create', 'customer', id, { name });
         res.status(201).json({ id, name });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -91,18 +91,18 @@ router.put('/:id', (req, res) => {
         logAudit(req.user.id, 'customer.update', 'customer', req.params.id);
         res.json({ message: 'Customer updated successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAdmin, (req, res) => {
     try {
         const result = db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
         if (result.changes === 0) return res.status(404).json({ error: 'Customer not found' });
         logAudit(req.user.id, 'customer.delete', 'customer', req.params.id);
         res.json({ message: 'Customer deleted successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

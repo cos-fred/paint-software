@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken } = require('../auth');
+const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 
 const router = express.Router();
@@ -24,11 +24,11 @@ router.get('/', (req, res) => {
         `).all(parseInt(limit));
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
     try {
         const { product_id, from_warehouse_id, to_warehouse_id, unit_type, quantity, notes } = req.body;
         if (!product_id || !from_warehouse_id || !to_warehouse_id || !unit_type || !quantity) {

@@ -13,7 +13,7 @@ router.get('/', (req, res) => {
         const rows = db.prepare('SELECT * FROM settings ORDER BY key').all();
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -23,7 +23,7 @@ router.get('/:key', (req, res) => {
         if (!row) return res.status(404).json({ error: 'Setting not found' });
         res.json(row);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -42,7 +42,7 @@ router.put('/:key', (req, res) => {
 
         res.json({ message: 'Setting saved', key: req.params.key, value });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -57,7 +57,7 @@ router.delete('/:key', (req, res) => {
         if (result.changes === 0) return res.status(404).json({ error: 'Setting not found' });
         res.json({ message: 'Setting deleted' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

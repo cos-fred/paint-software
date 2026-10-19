@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken } = require('../auth');
+const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 
 const router = express.Router();
@@ -38,7 +38,7 @@ router.get('/', (req, res) => {
         params.push(parseInt(limit), parseInt(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -77,7 +77,7 @@ router.get('/export', (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         return workbook.xlsx.write(res).then(() => res.end());
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -95,7 +95,7 @@ router.get('/:id', (req, res) => {
         const items = db.prepare(`SELECT si.*, p.name as product_name FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = ?`).all(req.params.id);
         res.json({ ...sale, items });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -116,7 +116,7 @@ router.get('/:id/receipt', (req, res) => {
         settings.forEach(s => { settingsObj[s.key] = s.value; });
         res.json(generateReceipt(sale, items, settingsObj));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -204,7 +204,7 @@ function computeDiscount(discount, type, subtotal) {
     return discount;
 }
 
-router.put('/:id/payment-status', (req, res) => {
+router.put('/:id/payment-status', requireAdmin, (req, res) => {
     try {
         const { payment_status } = req.body;
         const valid = ['pending', 'completed', 'cancelled', 'refunded'];
@@ -214,11 +214,11 @@ router.put('/:id/payment-status', (req, res) => {
         logAudit(req.user.id, 'sale.status', 'sale', req.params.id, { payment_status });
         res.json({ message: 'Payment status updated' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAdmin, (req, res) => {
     try {
         const sale = db.prepare('SELECT warehouse_id FROM sales WHERE id = ?').get(req.params.id);
         if (!sale) return res.status(404).json({ error: 'Sale not found' });
@@ -238,7 +238,7 @@ router.delete('/:id', (req, res) => {
         logAudit(req.user.id, 'sale.delete', 'sale', req.params.id);
         res.json({ message: 'Sale deleted and stock restored' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

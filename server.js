@@ -33,8 +33,22 @@ const auditRoutes = require('./routes/audit');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS: allow only explicitly configured origins. The frontend is served by
+// this same server, so same-origin requests work without any cross-origin access.
+function corsOrigins() {
+    const raw = (process.env.CORS_ORIGIN || '').trim();
+    if (!raw) return []; // no cross-origin allowed by default
+    if (raw === '*') {
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('CORS_ORIGIN=* is not allowed in production. Set explicit comma-separated origins.');
+        }
+        return '*';
+    }
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
+app.use(cors({ origin: corsOrigins(), credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 

@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken } = require('../auth');
+const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 
 const router = express.Router();
@@ -20,12 +20,12 @@ router.get('/', (req, res) => {
         params.push(parseInt(limit));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
 // Partial/full return of sale items — restores stock
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
     try {
         const { sale_id, items, reason } = req.body;
         if (!sale_id || !items || items.length === 0) return res.status(400).json({ error: 'Sale and at least one item are required' });

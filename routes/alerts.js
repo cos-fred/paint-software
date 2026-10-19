@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
         const rows = db.prepare(query).all(...params);
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -45,7 +45,7 @@ router.get('/unread-count', (req, res) => {
         const row = db.prepare(query).get(...params);
         res.json(row);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -63,7 +63,7 @@ router.put('/read-all', (req, res) => {
         const result = db.prepare(query).run(...params);
         res.json({ message: 'All alerts marked as read', count: result.changes });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -73,7 +73,7 @@ router.put('/:id/read', (req, res) => {
         if (result.changes === 0) return res.status(404).json({ error: 'Alert not found' });
         res.json({ message: 'Alert marked as read' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -83,7 +83,7 @@ router.delete('/:id', (req, res) => {
         if (result.changes === 0) return res.status(404).json({ error: 'Alert not found' });
         res.json({ message: 'Alert deleted' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 

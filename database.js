@@ -233,16 +233,18 @@ function initializeDatabase() {
         for (const w of warehouses) insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
     }
 
-    const defaultAdmin = {
-        id: uuidv4(),
-        username: 'admin',
-        email: 'admin@veemenz.com',
-        password_hash: bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'admin123', 12),
-        role: 'admin'
-    };
+    // Initial admin account — no hardcoded default password.
+    // On first run, ADMIN_PASSWORD must be provided; otherwise we fail safely.
     if (!db.prepare('SELECT * FROM users WHERE username = ?').get('admin')) {
+        const adminPassword = process.env.ADMIN_PASSWORD ? String(process.env.ADMIN_PASSWORD).trim() : '';
+        if (!adminPassword) {
+            throw new Error(
+                'ADMIN_PASSWORD is required to create the initial administrator account. ' +
+                'Set a strong ADMIN_PASSWORD environment variable and restart.'
+            );
+        }
         db.prepare('INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)')
-            .run(defaultAdmin.id, defaultAdmin.username, defaultAdmin.email, defaultAdmin.password_hash, defaultAdmin.role);
+            .run(uuidv4(), 'admin', 'admin@veemenz.com', bcrypt.hashSync(adminPassword, 12), 'admin');
     }
 
     insertDefaultSettings();

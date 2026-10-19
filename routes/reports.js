@@ -57,7 +57,7 @@ router.get('/inventory', (req, res) => {
             low_stock_items: lowStockItems
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -74,7 +74,7 @@ router.get('/sales/summary', (req, res) => {
         if (warehouse_id) { query += ' AND warehouse_id = ?'; params.push(warehouse_id); }
         res.json(db.prepare(query).get(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -92,7 +92,7 @@ router.get('/sales/by-product', (req, res) => {
         params.push(parseInt(limit));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -109,7 +109,7 @@ router.get('/sales/by-customer', (req, res) => {
         params.push(parseInt(limit));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -123,7 +123,7 @@ router.get('/sales/daily', (req, res) => {
         query += ' GROUP BY date(sale_date) ORDER BY sale_day ASC';
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
@@ -144,7 +144,7 @@ router.get('/stock-movements', (req, res) => {
         params.push(parseInt(limit), parseInt(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
 });
 
