@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
+const { stockColumn } = require('../lib/stock');
+const { ClientError, sendSafeError } = require('../lib/errors');
 
 const router = express.Router();
 const db = getDb();
@@ -24,7 +26,7 @@ router.get('/', (req, res) => {
         `).all(parseInt(limit));
         res.json(rows);
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[transfers]');
     }
 });
 
@@ -40,14 +42,15 @@ router.post('/', requireAdmin, (req, res) => {
         if (!['carton', 'liter20'].includes(unit_type)) return res.status(400).json({ error: 'Invalid unit type' });
         if (quantity <= 0) return res.status(400).json({ error: 'Quantity must be positive' });
 
-        const stockField = `${unit_type}_stock`;
+        const stockField = stockColumn(unit_type);
         const source = db.prepare(`SELECT ${stockField} as stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?`).get(product_id, from_warehouse_id);
         if (!source) return res.status(404).json({ error: 'Product not found in source warehouse' });
         if (source.stock < quantity) return res.status(400).json({ error: 'Insufficient stock in source warehouse' });
 
         const transferId = uuidv4();
         const transaction = db.transaction(() => {
-            db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, from_warehouse_id);
+            const deducted = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`).run(quantity, product_id, from_warehouse_id, quantity);
+            if (deducted.changes === 0) throw new ClientError(400, 'Insufficient stock in source warehouse');
             db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, to_warehouse_id);
 
             db.prepare(`INSERT INTO stock_transfers (id, product_id, from_warehouse_id, to_warehouse_id, unit_type, quantity, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -62,7 +65,7 @@ router.post('/', requireAdmin, (req, res) => {
         logAudit(req.user.id, 'stock.transfer', 'product', product_id, { from_warehouse_id, to_warehouse_id, unit_type, quantity });
         res.status(201).json({ id: transferId, message: 'Stock transferred successfully' });
     } catch (err) {
-        res.status(400).json({ error: err.message });
+        sendSafeError(res, err, '[transfers]');
     }
 });
 

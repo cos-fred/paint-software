@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "init-db": "node -e \"require('./database').initializeDatabase().then(() => console.log('Database initialized')).catch(console.error)\""
+    "init-db": "node -e \"require('./database').initializeDatabase()\"",
+    "test": "node --test --test-concurrency=1 tests/unit.security.test.js tests/startup.security.test.js tests/api.security.test.js"
   },
   "keywords": [
     "inventory",

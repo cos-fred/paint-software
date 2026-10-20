@@ -43,10 +43,11 @@ A comprehensive stock and inventory management system built for paint businesses
 ### Security
 - **JWT authentication** with secure password hashing (bcrypt)
 - **Role-based access**: Admin and User roles
-- **Rate limiting** to prevent abuse
+- **Rate limiting** (general API + stricter login limiter)
 - **Helmet.js** security headers
-- **CORS** configuration
+- **CORS** limited to configured origins (wildcard forbidden in production)
 - **Input validation** on all endpoints
+- **No default administrator password**
 
 ### Online Access Ready
 - RESTful API for frontend integration
@@ -69,32 +70,70 @@ npm start
 
 The server will start at `http://localhost:3000`
 
-### Default Login
-- **Username**: `admin`
-- **Password**: `admin123`
+### First-run administrator
 
-> **Important**: Change the default password immediately after first login!
+There is **no default password**. On a fresh database, set `ADMIN_PASSWORD` (12+ characters) in `.env` before starting. The account username is `admin`. Later startups never reset that password.
+
+If the database already exists, start the app as usual and log in with the current administrator credentials.
 
 ## Configuration
 
-Create a `.env` file (already included) with:
+Copy `.env.example` to `.env` and fill in real values. Do not commit `.env`.
 
 ```env
 PORT=3000
 NODE_ENV=development
-JWT_SECRET=your-super-secret-key-change-in-production
+JWT_SECRET=
+ADMIN_PASSWORD=
 DB_PATH=./paint_inventory.db
-CORS_ORIGIN=*
-TAX_RATE=0.10
+# CORS_ORIGIN=http://localhost:3000
 ```
+
+Generate a JWT secret:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+### CORS
+
+- Leave `CORS_ORIGIN` empty when the browser loads the UI from this same server (same-origin).
+- For a separate frontend, set explicit origins, e.g. `https://app.example.com`.
+- `CORS_ORIGIN=*` is allowed only in development and is rejected in production.
+
+### Roles
+
+Server-side permission matrix:
+
+| Action | Authenticated staff (`user`) | Administrator |
+| --- | --- | --- |
+| Create sales, view products/sales/customers | Yes | Yes |
+| Create/update customers | Yes | Yes |
+| Create/update/delete products, stock movements, transfers, returns | No | Yes |
+| Change payment status or cancel a sale | No | Yes |
+| User, settings, and audit management | No | Yes |
+
+Authorization is enforced on the server. Hiding buttons in the UI is not sufficient.
+
+Tokens last 24 hours by default (`JWT_EXPIRES_IN`). Every request re-checks the current role, active flag, and token version. Password changes, role changes, and disabling an account invalidate existing sessions immediately.
+
+### Login rate limiting
+
+Failed logins are limited separately from the general API (default 10 failures / 15 minutes per IP). Behind a reverse proxy set `TRUST_PROXY=1` so the limiter uses `X-Forwarded-For`.
+
+### JWT secret rotation
+
+Change `JWT_SECRET` and restart the process. All outstanding tokens stop verifying. Users must log in again. Rotate immediately if a secret may have been committed, logged, or shared.
 
 ### Production Deployment
 
-1. **Change JWT_SECRET** to a strong random string
-2. **Set NODE_ENV=production**
-3. **Configure CORS_ORIGIN** to your domain
-4. **Use PostgreSQL** for production (see Database Migration below)
-5. **Enable HTTPS** with reverse proxy (nginx, Cloudflare, etc.)
+1. Set a strong random `JWT_SECRET` (32+ characters, not a placeholder)
+2. Set `ADMIN_PASSWORD` for first run only, then store it in a password manager
+3. Set `NODE_ENV=production`
+4. Set `CORS_ORIGIN` to your real https origin(s), never `*`
+5. Set `TRUST_PROXY=1` behind Railway/Render/nginx
+6. Enable HTTPS at the reverse proxy
+7. Keep the SQLite file on a persistent volume and restrict file permissions
 
 ## Database Migration (SQLite → PostgreSQL)
 

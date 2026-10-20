@@ -40,13 +40,15 @@ The code is already prepared:
 4. **Set environment variables** (service → **Variables**)
    | Name | Value |
    |------|-------|
-   | `JWT_SECRET` | a long random string (see `.env.example`) |
+   | `JWT_SECRET` | a long random string (see `.env.example`); never a placeholder |
+   | `ADMIN_PASSWORD` | strong password used only to create the first admin |
    | `DB_PATH` | `/data/paint_inventory.db` |
    | `BACKUP_DIR` | `/data/backups` |
-   | `CORS_ORIGIN` | `https://your-app.up.railway.app` (or `*`) |
+   | `CORS_ORIGIN` | `https://your-app.up.railway.app` (explicit origin, never `*`) |
+   | `TRUST_PROXY` | `1` |
 
 5. Railway gives you a **public URL** (e.g. `https://your-app.up.railway.app`).
-   Open it → login with `admin` / `admin123` (then change the password).
+   Open it and log in as `admin` with the `ADMIN_PASSWORD` you set. There is no default password.
 
 > Note: `better-sqlite3` ships prebuilt binaries, so it usually installs cleanly.
 > A `Dockerfile`, `.nvmrc` and `nixpacks.toml` are already included to pin Node 20
@@ -90,10 +92,13 @@ Point a domain at it and put it behind HTTPS (Caddy/Nginx + Let's Encrypt).
 
 ## Security checklist (before going live)
 
-- [ ] Set a strong random `JWT_SECRET`.
-- [ ] Change the default admin password (Profile → Change Password).
-- [ ] Set `CORS_ORIGIN` to your domain (not `*`).
+- [ ] Set a strong random `JWT_SECRET` (32+ chars). If an old secret may have been exposed, rotate it now — all sessions will end.
+- [ ] Set `ADMIN_PASSWORD` for first boot; do not use a published default.
+- [ ] Change the administrator password after first login if anyone else saw `ADMIN_PASSWORD`.
+- [ ] Set `CORS_ORIGIN` to your https origin (not `*`).
+- [ ] Set `TRUST_PROXY=1` so login throttling sees real client IPs.
 - [ ] Enable HTTPS (Railway/Render do this automatically).
+- [ ] Restrict access to the SQLite file and backup directory.
 
 ## What "real-time" means here
 

@@ -3,22 +3,45 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
+const { stockColumn, priceColumn, UNIT_TYPES } = require('../lib/stock');
+const { ClientError, sendSafeError } = require('../lib/errors');
 
 const router = express.Router();
 const db = getDb();
 
 router.use(authenticateToken);
 
+const PAYMENT_METHODS = ['cash', 'card', 'transfer', 'momo'];
+const PAYMENT_STATUSES = ['pending', 'completed', 'cancelled', 'refunded'];
+const ALLOWED_STATUS_TRANSITIONS = {
+    pending: ['completed', 'cancelled'],
+    completed: ['refunded', 'cancelled'],
+    cancelled: [],
+    refunded: []
+};
+
 function getTaxRate() {
     const row = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get();
     return parseFloat(row?.value) || 0.10;
 }
 
-function getCustomerBalance(customerId) {
-    if (!customerId) return 0;
-    const credit = db.prepare("SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE customer_id = ? AND payment_method = 'credit' AND payment_status != 'cancelled'").get(customerId).total;
-    const paid = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE customer_id = ?").get(customerId).total;
-    return credit - paid;
+function restockSale(saleId, warehouseId, userId, referenceType) {
+    const items = db.prepare('SELECT product_id, unit_type, quantity FROM sale_items WHERE sale_id = ?').all(saleId);
+    for (const item of items) {
+        const field = stockColumn(item.unit_type);
+        const returned = db.prepare(
+            'SELECT COALESCE(SUM(quantity), 0) as q FROM sale_returns WHERE sale_id = ? AND product_id = ? AND unit_type = ?'
+        ).get(saleId, item.product_id, item.unit_type).q;
+        const qty = item.quantity - returned;
+        if (qty <= 0) continue;
+        db.prepare(
+            `UPDATE product_stock SET ${field} = ${field} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`
+        ).run(qty, item.product_id, warehouseId);
+        db.prepare(
+            `INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by)
+             VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?)`
+        ).run(uuidv4(), item.product_id, warehouseId, item.unit_type, qty, saleId, referenceType, userId);
+    }
 }
 
 router.get('/', (req, res) => {
@@ -31,14 +54,18 @@ router.get('/', (req, res) => {
         if (customer_id) { query += ' AND s.customer_id = ?'; params.push(customer_id); }
         if (start_date) { query += ' AND s.sale_date >= ?'; params.push(start_date); }
         if (end_date) { query += ' AND s.sale_date <= ?'; params.push(end_date + ' 23:59:59'); }
-        if (payment_status) { query += ' AND s.payment_status = ?'; params.push(payment_status); }
+        if (payment_status) {
+            if (!PAYMENT_STATUSES.includes(payment_status)) return res.status(400).json({ error: 'Invalid payment status' });
+            query += ' AND s.payment_status = ?';
+            params.push(payment_status);
+        }
         if (warehouse_id) { query += ' AND s.warehouse_id = ?'; params.push(warehouse_id); }
         if (search) { query += ' AND (c.name LIKE ? OR s.payment_method LIKE ? OR s.notes LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
         query += ' ORDER BY s.sale_date DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(parseInt(limit, 10) || 100, parseInt(offset, 10) || 0);
         res.json(db.prepare(query).all(...params));
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 
@@ -77,7 +104,7 @@ router.get('/export', (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         return workbook.xlsx.write(res).then(() => res.end());
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 
@@ -95,7 +122,7 @@ router.get('/:id', (req, res) => {
         const items = db.prepare(`SELECT si.*, p.name as product_name FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = ?`).all(req.params.id);
         res.json({ ...sale, items });
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 
@@ -116,7 +143,7 @@ router.get('/:id/receipt', (req, res) => {
         settings.forEach(s => { settingsObj[s.key] = s.value; });
         res.json(generateReceipt(sale, items, settingsObj));
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 
@@ -145,22 +172,40 @@ router.post('/', (req, res) => {
         if (!warehouse_id) return res.status(400).json({ error: 'Warehouse is required' });
         if (!items || items.length === 0) return res.status(400).json({ error: 'At least one item is required' });
 
+        const method = payment_method || 'cash';
+        const status = payment_status || 'completed';
+        if (!PAYMENT_METHODS.includes(method)) return res.status(400).json({ error: 'Invalid payment method' });
+        if (!PAYMENT_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid payment status' });
+        if (status === 'cancelled' || status === 'refunded') {
+            return res.status(400).json({ error: 'New sales cannot start as cancelled or refunded' });
+        }
+
         const saleId = uuidv4();
         let subtotal = 0;
         const validatedItems = [];
 
         for (const item of items) {
-            const stockField = `${item.unit_type}_stock`;
-            const row = db.prepare(`SELECT ${stockField} as stock, name, ${item.unit_type}_price as price FROM product_stock ps JOIN products p ON ps.product_id = p.id WHERE ps.product_id = ? AND ps.warehouse_id = ?`).get(item.product_id, warehouse_id);
-            if (!row) throw new Error(`Product ${item.product_id} not found in warehouse`);
-            if (row.stock < item.quantity) throw new Error(`Insufficient stock for ${row.name} (${item.unit_type}): ${row.stock} available, ${item.quantity} requested`);
+            if (!UNIT_TYPES.includes(item.unit_type)) throw new ClientError(400, 'Invalid unit type');
+            const quantity = Number.parseInt(item.quantity, 10);
+            if (!Number.isInteger(quantity) || quantity <= 0) throw new ClientError(400, 'Quantity must be a positive integer');
 
-            const unitPrice = item.unit_price != null ? item.unit_price : row.price;
-            const gross = item.quantity * unitPrice;
+            const stockField = stockColumn(item.unit_type);
+            const priceField = priceColumn(item.unit_type);
+            const row = db.prepare(
+                `SELECT ps.${stockField} as stock, p.name, p.${priceField} as price
+                 FROM product_stock ps JOIN products p ON ps.product_id = p.id
+                 WHERE ps.product_id = ? AND ps.warehouse_id = ?`
+            ).get(item.product_id, warehouse_id);
+            if (!row) throw new ClientError(400, 'Product not found in warehouse');
+            if (row.stock < quantity) throw new ClientError(400, `Insufficient stock for ${row.name}`);
+
+            const unitPrice = item.unit_price != null ? Number(item.unit_price) : row.price;
+            if (!(unitPrice >= 0)) throw new ClientError(400, 'Invalid unit price');
+            const gross = quantity * unitPrice;
             const lineDiscount = item.discount || 0;
             const lineTotal = Math.max(0, gross - lineDiscount);
             subtotal += lineTotal;
-            validatedItems.push({ ...item, unit_price: unitPrice, discount: lineDiscount, line_total: lineTotal });
+            validatedItems.push({ ...item, quantity, unit_price: unitPrice, discount: lineDiscount, line_total: lineTotal });
         }
 
         const taxRate = getTaxRate();
@@ -172,18 +217,26 @@ router.post('/', (req, res) => {
             db.prepare(
                 `INSERT INTO sales (id, customer_id, warehouse_id, subtotal, tax, discount, discount_type, total, payment_method, payment_status, notes, created_by)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, discountAmount, discount_type || 'amount', total, payment_method || 'cash', payment_status || 'completed', notes || null, req.user.id);
+            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, discountAmount, discount_type || 'amount', total, method, status, notes || null, req.user.id);
 
             for (const item of validatedItems) {
                 const itemId = uuidv4();
-                const stockField = `${item.unit_type}_stock`;
+                const stockField = stockColumn(item.unit_type);
                 db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, discount, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
                     .run(itemId, saleId, item.product_id, warehouse_id, item.unit_type, item.quantity, item.unit_price, item.discount, item.line_total);
-                db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(item.quantity, item.product_id, warehouse_id);
+                const deducted = db.prepare(
+                    `UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP
+                     WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`
+                ).run(item.quantity, item.product_id, warehouse_id, item.quantity);
+                if (deducted.changes === 0) throw new ClientError(400, 'Insufficient stock');
                 db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by) VALUES (?, ?, ?, 'out', ?, ?, ?, 'sale', ?)`)
                     .run(uuidv4(), item.product_id, warehouse_id, item.unit_type, item.quantity, saleId, req.user.id);
 
-                const productRow = db.prepare(`SELECT ${stockField} as stock, low_stock_threshold, name FROM products p JOIN product_stock ps ON p.id = ps.product_id WHERE p.id = ? AND ps.warehouse_id = ?`).get(item.product_id, warehouse_id);
+                const productRow = db.prepare(
+                    `SELECT ps.${stockField} as stock, p.low_stock_threshold, p.name
+                     FROM products p JOIN product_stock ps ON p.id = ps.product_id
+                     WHERE p.id = ? AND ps.warehouse_id = ?`
+                ).get(item.product_id, warehouse_id);
                 if (productRow && productRow.stock <= productRow.low_stock_threshold) {
                     db.prepare(`INSERT INTO alerts (id, type, product_id, warehouse_id, message, severity) VALUES (?, ?, ?, ?, ?, ?)`)
                         .run(uuidv4(), 'low_stock', item.product_id, warehouse_id, `Low stock alert: ${productRow.name} (${item.unit_type}) has ${productRow.stock} remaining`, 'warning');
@@ -192,10 +245,10 @@ router.post('/', (req, res) => {
         });
         transaction();
 
-        logAudit(req.user.id, 'sale.create', 'sale', saleId, { total, payment_method: payment_method || 'cash' });
+        logAudit(req.user.id, 'sale.create', 'sale', saleId, { total, payment_method: method });
         res.status(201).json({ id: saleId, total, message: 'Sale completed successfully' });
     } catch (err) {
-        res.status(400).json({ error: err.message });
+        sendSafeError(res, err, '[sales] create');
     }
 });
 
@@ -204,41 +257,46 @@ function computeDiscount(discount, type, subtotal) {
     return discount;
 }
 
+function applyStatusChange(saleId, nextStatus, userId) {
+    const sale = db.prepare('SELECT id, warehouse_id, payment_status FROM sales WHERE id = ?').get(saleId);
+    if (!sale) throw new ClientError(404, 'Sale not found');
+    if (sale.payment_status === nextStatus) throw new ClientError(400, 'Payment status is already set');
+    const allowed = ALLOWED_STATUS_TRANSITIONS[sale.payment_status] || [];
+    if (!allowed.includes(nextStatus)) {
+        throw new ClientError(400, 'Invalid payment status transition');
+    }
+
+    const shouldRestock = nextStatus === 'cancelled' || nextStatus === 'refunded';
+    const transaction = db.transaction(() => {
+        const result = db.prepare(
+            'UPDATE sales SET payment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND payment_status = ?'
+        ).run(nextStatus, saleId, sale.payment_status);
+        if (result.changes === 0) throw new ClientError(409, 'Sale was updated by another request');
+        if (shouldRestock) restockSale(saleId, sale.warehouse_id, userId, nextStatus === 'refunded' ? 'sale_return' : 'sale_return');
+    });
+    transaction();
+    return sale;
+}
+
 router.put('/:id/payment-status', requireAdmin, (req, res) => {
     try {
         const { payment_status } = req.body;
-        const valid = ['pending', 'completed', 'cancelled', 'refunded'];
-        if (!valid.includes(payment_status)) return res.status(400).json({ error: 'Invalid payment status' });
-        const result = db.prepare('UPDATE sales SET payment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(payment_status, req.params.id);
-        if (result.changes === 0) return res.status(404).json({ error: 'Sale not found' });
+        if (!PAYMENT_STATUSES.includes(payment_status)) return res.status(400).json({ error: 'Invalid payment status' });
+        applyStatusChange(req.params.id, payment_status, req.user.id);
         logAudit(req.user.id, 'sale.status', 'sale', req.params.id, { payment_status });
         res.json({ message: 'Payment status updated' });
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 
 router.delete('/:id', requireAdmin, (req, res) => {
     try {
-        const sale = db.prepare('SELECT warehouse_id FROM sales WHERE id = ?').get(req.params.id);
-        if (!sale) return res.status(404).json({ error: 'Sale not found' });
-        const items = db.prepare('SELECT product_id, unit_type, quantity FROM sale_items WHERE sale_id = ?').all(req.params.id);
-
-        const transaction = db.transaction(() => {
-            for (const item of items) {
-                const stockField = `${item.unit_type}_stock`;
-                db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(item.quantity, item.product_id, sale.warehouse_id);
-                db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by) VALUES (?, ?, ?, 'in', ?, ?, ?, 'sale_return', ?)`)
-                    .run(uuidv4(), item.product_id, sale.warehouse_id, item.unit_type, item.quantity, req.params.id, req.user.id);
-            }
-            db.prepare('DELETE FROM sale_items WHERE sale_id = ?').run(req.params.id);
-            db.prepare('DELETE FROM sales WHERE id = ?').run(req.params.id);
-        });
-        transaction();
-        logAudit(req.user.id, 'sale.delete', 'sale', req.params.id);
-        res.json({ message: 'Sale deleted and stock restored' });
+        applyStatusChange(req.params.id, 'cancelled', req.user.id);
+        logAudit(req.user.id, 'sale.cancel', 'sale', req.params.id);
+        res.json({ message: 'Sale cancelled and stock restored' });
     } catch (err) {
-        console.error(err); res.status(500).json({ error: 'Something went wrong' });
+        sendSafeError(res, err, '[sales]');
     }
 });
 

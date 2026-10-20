@@ -10,10 +10,18 @@ if (process.env.DB_PATH) {
     if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 const db = new Database(dbPath);
+const { validateAdminPassword } = require('./lib/passwords');
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('synchronous = NORMAL');
+
+function migrateSchema() {
+    const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+    if (!userCols.includes('token_version')) {
+        db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+    }
+}
 
 function initializeDatabase() {
     db.exec('PRAGMA foreign_keys = ON');
@@ -26,6 +34,7 @@ function initializeDatabase() {
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
             is_active INTEGER NOT NULL DEFAULT 1,
+            token_version INTEGER NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -223,6 +232,8 @@ function initializeDatabase() {
         CREATE INDEX IF NOT EXISTS idx_alerts_unread ON alerts(is_read);
     `);
 
+    migrateSchema();
+
     const warehouseCount = db.prepare('SELECT COUNT(*) as count FROM warehouses').get().count;
     if (warehouseCount === 0) {
         const warehouses = [
@@ -233,17 +244,12 @@ function initializeDatabase() {
         for (const w of warehouses) insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
     }
 
-    // Initial admin account — no hardcoded default password.
-    // On first run, ADMIN_PASSWORD must be provided; otherwise we fail safely.
-    if (!db.prepare('SELECT * FROM users WHERE username = ?').get('admin')) {
-        const adminPassword = process.env.ADMIN_PASSWORD ? String(process.env.ADMIN_PASSWORD).trim() : '';
-        if (!adminPassword) {
-            throw new Error(
-                'ADMIN_PASSWORD is required to create the initial administrator account. ' +
-                'Set a strong ADMIN_PASSWORD environment variable and restart.'
-            );
-        }
-        db.prepare('INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)')
+    // Initial admin account — no hardcoded default password, and never reset
+    // an existing administrator on later startups.
+    const existingAdmin = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+    if (!existingAdmin) {
+        const adminPassword = validateAdminPassword(process.env.ADMIN_PASSWORD);
+        db.prepare('INSERT INTO users (id, username, email, password_hash, role, is_active, token_version) VALUES (?, ?, ?, ?, ?, 1, 0)')
             .run(uuidv4(), 'admin', 'admin@veemenz.com', bcrypt.hashSync(adminPassword, 12), 'admin');
     }
 
