@@ -310,4 +310,97 @@ describe('API security', { concurrency: 1 }, () => {
         const ok = await request(server, { path: '/api/products', token: fresh.body.token });
         assert.equal(ok.status, 200);
     });
+
+    it('rejects cumulative returns exceeding the sold quantity, including duplicates', async () => {
+        const sale = await request(server, {
+            method: 'POST',
+            path: '/api/sales',
+            token: adminToken,
+            body: {
+                warehouse_id: warehouseId,
+                payment_method: 'cash',
+                items: [{ product_id: productId, unit_type: 'carton', quantity: 2 }]
+            }
+        });
+        assert.equal(sale.status, 201, JSON.stringify(sale.body));
+        const returnSaleId = sale.body.id;
+
+        const dup = await request(server, {
+            method: 'POST',
+            path: '/api/returns',
+            token: adminToken,
+            body: {
+                sale_id: returnSaleId,
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 1 },
+                    { product_id: productId, unit_type: 'carton', quantity: 1 },
+                    { product_id: productId, unit_type: 'carton', quantity: 1 }
+                ]
+            }
+        });
+        assert.equal(dup.status, 400, JSON.stringify(dup.body));
+
+        const firstReturn = await request(server, {
+            method: 'POST',
+            path: '/api/returns',
+            token: adminToken,
+            body: {
+                sale_id: returnSaleId,
+                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+            }
+        });
+        assert.equal(firstReturn.status, 201, JSON.stringify(firstReturn.body));
+
+        const secondReturn = await request(server, {
+            method: 'POST',
+            path: '/api/returns',
+            token: adminToken,
+            body: {
+                sale_id: returnSaleId,
+                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+            }
+        });
+        assert.equal(secondReturn.status, 201, JSON.stringify(secondReturn.body));
+
+        const overReturn = await request(server, {
+            method: 'POST',
+            path: '/api/returns',
+            token: adminToken,
+            body: {
+                sale_id: returnSaleId,
+                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+            }
+        });
+        assert.equal(overReturn.status, 400, JSON.stringify(overReturn.body));
+    });
+
+    it('archives products without destroying history', async () => {
+        const del = await request(server, {
+            method: 'DELETE',
+            path: `/api/products/${productId}`,
+            token: adminToken
+        });
+        assert.equal(del.status, 200, JSON.stringify(del.body));
+
+        const product = getDb().prepare('SELECT id, is_active FROM products WHERE id = ?').get(productId);
+        assert.ok(product, 'product should still exist after archive');
+        assert.equal(product.is_active, 0);
+
+        const saleItems = getDb().prepare('SELECT COUNT(*) as n FROM sale_items WHERE product_id = ?').get(productId).n;
+        assert.ok(saleItems > 0, 'sale item history should be preserved');
+
+        const movements = getDb().prepare('SELECT COUNT(*) as n FROM stock_movements WHERE product_id = ?').get(productId).n;
+        assert.ok(movements > 0, 'stock movement history should be preserved');
+
+        const list = await request(server, { path: '/api/products', token: adminToken });
+        assert.equal(list.status, 200);
+        assert.equal(list.body.some((p) => p.id === productId), false, 'archived product hidden from listing');
+
+        const again = await request(server, {
+            method: 'DELETE',
+            path: `/api/products/${productId}`,
+            token: adminToken
+        });
+        assert.equal(again.status, 404);
+    });
 });

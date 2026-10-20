@@ -39,14 +39,31 @@ router.post('/', requireAdmin, (req, res) => {
         }
 
         const transaction = db.transaction(() => {
+            const summed = new Map();
             for (const item of items) {
-                const { product_id, unit_type, quantity } = item;
-                if (!product_id || !unit_type || !quantity || quantity <= 0) throw new ClientError(400, 'Invalid return item');
+                const product_id = item.product_id;
+                const unit_type = item.unit_type;
+                const quantity = Number(item.quantity);
+
+                if (!product_id || !unit_type || !Number.isInteger(quantity) || quantity <= 0) {
+                    throw new ClientError(400, 'Invalid return item');
+                }
                 if (!UNIT_TYPES.includes(unit_type)) throw new ClientError(400, 'Invalid unit type');
+
+                const key = `${product_id}:${unit_type}`;
+                summed.set(key, (summed.get(key) || 0) + quantity);
+            }
+
+            for (const [key, quantity] of summed.entries()) {
+                const [product_id, unit_type] = key.split(':');
 
                 const original = db.prepare('SELECT * FROM sale_items WHERE sale_id = ? AND product_id = ? AND unit_type = ?').get(sale_id, product_id, unit_type);
                 if (!original) throw new ClientError(400, 'Returned item not found in original sale');
-                if (quantity > original.quantity) throw new ClientError(400, 'Return quantity exceeds original sold quantity');
+
+                const alreadyReturned = db.prepare('SELECT COALESCE(SUM(quantity), 0) as q FROM sale_returns WHERE sale_id = ? AND product_id = ? AND unit_type = ?').get(sale_id, product_id, unit_type).q;
+                if (alreadyReturned + quantity > original.quantity) {
+                    throw new ClientError(400, 'Return quantity exceeds the remaining returnable quantity for this item');
+                }
 
                 const unitPrice = original.unit_price;
                 const lineTotal = quantity * unitPrice;

@@ -189,22 +189,16 @@ router.put('/:id', requireAdmin, (req, res) => {
 router.delete('/:id', requireAdmin, (req, res) => {
     try {
         const productId = req.params.id;
-        const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
-        if (!product) return res.status(404).json({ error: 'Product not found' });
+        const product = db.prepare('SELECT id, name, is_active FROM products WHERE id = ?').get(productId);
+        if (!product || product.is_active === 0) return res.status(404).json({ error: 'Product not found' });
 
-        const transaction = db.transaction(() => {
-            db.prepare('DELETE FROM sale_returns WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM sale_items WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM stock_movements WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM stock_transfers WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM alerts WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM product_stock WHERE product_id = ?').run(productId);
-            db.prepare('DELETE FROM products WHERE id = ?').run(productId);
-        });
-        transaction();
+        // Archive rather than hard-delete so that sale items, returns, stock
+        // movements, transfers, and financial history are preserved.
+        const result = db.prepare('UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1').run(productId);
+        if (result.changes === 0) return res.status(404).json({ error: 'Product not found' });
 
-        logAudit(req.user.id, 'product.delete', 'product', productId, { name: product.name });
-        res.json({ message: 'Product deleted successfully' });
+        logAudit(req.user.id, 'product.archive', 'product', productId, { name: product.name });
+        res.json({ message: 'Product archived successfully' });
     } catch (err) {
         sendSafeError(res, err, '[products]');
     }
