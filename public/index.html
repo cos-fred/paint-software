@@ -525,6 +525,22 @@
                                 </div>
                                 <button class="btn btn-primary" id="add-user-btn">Add User</button>
                             </div>
+                            <div class="card" id="warehouse-management-card" style="display: none;">
+                                <h3>Warehouse Management</h3>
+                                <div class="table-container">
+                                    <table id="warehouses-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Code</th>
+                                                <th>City</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </section>
 
@@ -990,6 +1006,34 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="warehouse-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Rename Warehouse</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="warehouse-form">
+                <input type="hidden" id="warehouse-id">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="warehouse-name" required placeholder="Warehouse name">
+                </div>
+                <div class="form-group">
+                    <label>Code</label>
+                    <input type="text" id="warehouse-code" placeholder="e.g. WH001">
+                </div>
+                <div class="form-group">
+                    <label>City</label>
+                    <input type="text" id="warehouse-city" placeholder="City">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
                 </div>
             </form>
         </div>

@@ -132,6 +132,7 @@ async function loadUser() {
         document.getElementById('profile-role').value = user.role;
         if (user.role === 'admin') {
             document.getElementById('user-management-card').style.display = '';
+            document.getElementById('warehouse-management-card').style.display = '';
             const auditNav = document.getElementById('audit-nav');
             if (auditNav) auditNav.style.display = '';
         }
@@ -288,6 +289,9 @@ function setupEventListeners() {
     document.getElementById('add-user-btn')?.addEventListener('click', () => openUserModal());
     document.getElementById('user-form')?.addEventListener('submit', handleUserSubmit);
 
+    // Warehouses
+    document.getElementById('warehouse-form')?.addEventListener('submit', handleWarehouseSubmit);
+
     // Profile
     document.getElementById('change-password-btn')?.addEventListener('click', () => showModal('password-modal'));
     document.getElementById('password-form')?.addEventListener('submit', handlePasswordChange);
@@ -379,7 +383,7 @@ function switchSection(section) {
         case 'audit': loadAudit(); break;
         case 'reports': loadReports(); break;
         case 'alerts': loadAlerts(); break;
-        case 'settings': loadSettings(); if (currentUser?.role === 'admin') loadUsers(); break;
+        case 'settings': loadSettings(); if (currentUser?.role === 'admin') { loadUsers(); loadWarehouseManagement(); } break;
         case 'profile': break;
     }
 }
@@ -1378,6 +1382,53 @@ function confirmDeleteUser(id, username) {
             loadUsers();
         } catch (err) { showToast(err.message, 'error'); }
     });
+}
+
+// ===================================================
+// WAREHOUSE MANAGEMENT
+// ===================================================
+
+async function loadWarehouseManagement() {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/products/warehouses`);
+        const warehouses = await res.json();
+        const tbody = document.querySelector('#warehouses-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = warehouses.map(w => `
+            <tr>
+                <td>${escapeHtml(w.name)}</td>
+                <td>${escapeHtml(w.code)}</td>
+                <td>${escapeHtml(w.city || '—')}</td>
+                <td><button class="action-btn edit" onclick="openWarehouseModal('${w.id}','${escapeHtml(w.name)}','${escapeHtml(w.code)}','${escapeHtml(w.city || '')}')">✏️ Rename</button></td>
+            </tr>`).join('');
+    } catch (err) { console.error('Warehouses error:', err); }
+}
+
+function openWarehouseModal(id, name, code, city) {
+    document.getElementById('warehouse-id').value = id;
+    document.getElementById('warehouse-name').value = name;
+    document.getElementById('warehouse-code').value = code;
+    document.getElementById('warehouse-city').value = city || '';
+    showModal('warehouse-modal');
+}
+
+async function handleWarehouseSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('warehouse-id').value;
+    const data = {
+        name: document.getElementById('warehouse-name').value.trim(),
+        code: document.getElementById('warehouse-code').value.trim(),
+        city: document.getElementById('warehouse-city').value.trim()
+    };
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/products/warehouses/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
+        showToast('Warehouse renamed', 'success');
+        closeModal('warehouse-modal');
+        await loadWarehouses();
+        await loadWarehouseManagement();
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function handlePasswordChange(e) {

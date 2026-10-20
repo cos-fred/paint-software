@@ -64,6 +64,39 @@ router.get('/warehouses', (req, res) => {
     }
 });
 
+router.put('/warehouses/:id', requireAdmin, (req, res) => {
+    try {
+        const { name, code, address, city, country } = req.body;
+        const existing = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Warehouse not found' });
+
+        if (name !== undefined && !String(name).trim()) {
+            return res.status(400).json({ error: 'Warehouse name cannot be empty' });
+        }
+        if (code !== undefined && !String(code).trim()) {
+            return res.status(400).json({ error: 'Warehouse code cannot be empty' });
+        }
+
+        const updates = [];
+        const params = [];
+        if (name !== undefined) { updates.push('name = ?'); params.push(String(name).trim()); }
+        if (code !== undefined) { updates.push('code = ?'); params.push(String(code).trim()); }
+        if (address !== undefined) { updates.push('address = ?'); params.push(address); }
+        if (city !== undefined) { updates.push('city = ?'); params.push(city); }
+        if (country !== undefined) { updates.push('country = ?'); params.push(country); }
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(req.params.id);
+
+        db.prepare(`UPDATE warehouses SET ${updates.join(', ')} WHERE id = ? AND is_active = 1`).run(...params);
+        logAudit(req.user.id, 'warehouse.update', 'warehouse', req.params.id, { name, code, city, country });
+        res.json({ message: 'Warehouse updated successfully' });
+    } catch (err) {
+        sendSafeError(res, err, '[products]');
+    }
+});
+
 router.get('/low-stock', (req, res) => {
     try {
         const { warehouse_id } = req.query;
@@ -265,44 +298,76 @@ router.get('/:id/movements', (req, res) => {
     }
 });
 
+function safeSheetName(name, fallback) {
+    let base = String(name || fallback || 'Warehouse').replace(/[\\/?*[\]:]/g, ' ').trim();
+    if (!base) base = 'Warehouse';
+    if (base.length > 31) base = base.slice(0, 31);
+    return base;
+}
+
 router.get('/stock/export', (req, res) => {
     try {
         const { warehouse_id, format = 'excel' } = req.query;
-        const params = [];
-        let query = `SELECT p.name, p.sku, p.carton_price, p.liter20_price, p.low_stock_threshold, ps.carton_stock, ps.liter20_stock, w.name as warehouse_name, w.code as warehouse_code
-            FROM products p LEFT JOIN product_stock ps ON p.id = ps.product_id LEFT JOIN warehouses w ON ps.warehouse_id = w.id WHERE p.is_active = 1`;
-        if (warehouse_id) { query += ' AND ps.warehouse_id = ?'; params.push(warehouse_id); }
-        else { query += ' AND w.is_active = 1'; }
-        query += ' ORDER BY w.name, p.name';
-        const rows = db.prepare(query).all(...params);
+
+        const warehouses = warehouse_id
+            ? db.prepare('SELECT id, name, code FROM warehouses WHERE id = ? AND is_active = 1').all(warehouse_id)
+            : db.prepare('SELECT id, name, code FROM warehouses WHERE is_active = 1 ORDER BY name').all();
+
+        if (warehouse_id && warehouses.length === 0) {
+            return res.status(404).json({ error: 'Warehouse not found' });
+        }
+
+        const stockQuery = `
+            SELECT p.name, p.sku, p.carton_price, p.liter20_price, p.low_stock_threshold,
+                   ps.carton_stock, ps.liter20_stock
+            FROM products p JOIN product_stock ps ON p.id = ps.product_id
+            WHERE p.is_active = 1 AND ps.warehouse_id = ?
+            ORDER BY p.name
+        `;
 
         if (format === 'excel') {
             const ExcelJS = require('exceljs');
             const workbook = new ExcelJS.Workbook();
-            const ws = workbook.addWorksheet('Stock Inventory');
-            ws.columns = [
-                { header: 'Product', key: 'name', width: 30 },
-                { header: 'SKU', key: 'sku', width: 15 },
-                { header: 'Warehouse', key: 'warehouse', width: 20 },
-                { header: 'Carton Price (₵)', key: 'carton_price', width: 18 },
-                { header: '20L Price (₵)', key: 'liter20_price', width: 16 },
-                { header: 'Carton Stock', key: 'carton_stock', width: 14 },
-                { header: '20L Stock', key: 'liter20_stock', width: 12 },
-                { header: 'Reorder Level', key: 'threshold', width: 14 },
-                { header: 'Total Value (₵)', key: 'total_value', width: 18 }
-            ];
-            rows.forEach(r => {
-                const total = (r.carton_price * r.carton_stock) + (r.liter20_price * r.liter20_stock);
-                ws.addRow({ name: r.name, sku: r.sku || '', warehouse: r.warehouse_name, carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold, total_value: total });
-            });
-            ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
-            ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
-            ['carton_price', 'liter20_price', 'total_value'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+            const used = new Set();
+
+            for (const wh of warehouses) {
+                const rows = db.prepare(stockQuery).all(wh.id);
+
+                let sheetName = safeSheetName(wh.name, wh.code);
+                let candidate = sheetName;
+                let n = 2;
+                while (used.has(candidate)) candidate = `${sheetName} (${n++})`;
+                used.add(candidate);
+
+                const ws = workbook.addWorksheet(candidate);
+                ws.columns = [
+                    { header: 'Product', key: 'name', width: 30 },
+                    { header: 'SKU', key: 'sku', width: 15 },
+                    { header: 'Carton Price (₵)', key: 'carton_price', width: 18 },
+                    { header: '20L Price (₵)', key: 'liter20_price', width: 16 },
+                    { header: 'Carton Stock', key: 'carton_stock', width: 14 },
+                    { header: '20L Stock', key: 'liter20_stock', width: 12 },
+                    { header: 'Reorder Level', key: 'threshold', width: 14 },
+                    { header: 'Total Value (₵)', key: 'total_value', width: 18 }
+                ];
+                rows.forEach(r => {
+                    const total = (r.carton_price * r.carton_stock) + (r.liter20_price * r.liter20_stock);
+                    ws.addRow({ name: r.name, sku: r.sku || '', carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold, total_value: total });
+                });
+                ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
+                ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
+                ['carton_price', 'liter20_price', 'total_value'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+            }
+
             const filename = `VEEMENZ-Stock-${new Date().toISOString().split('T')[0]}.xlsx`;
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
             return workbook.xlsx.write(res).then(() => res.end());
         }
+
+        const rows = warehouses.flatMap(wh =>
+            db.prepare(stockQuery).all(wh.id).map(r => ({ ...r, warehouse_id: wh.id, warehouse_name: wh.name, warehouse_code: wh.code }))
+        );
         res.json(rows);
     } catch (err) {
         console.error('Export error:', err);
