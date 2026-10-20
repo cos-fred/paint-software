@@ -262,6 +262,9 @@ function setupEventListeners() {
     document.getElementById('add-product-btn')?.addEventListener('click', () => openProductModal());
     document.getElementById('product-form')?.addEventListener('submit', handleProductSubmit);
     document.getElementById('product-unit-price')?.addEventListener('input', updateCartonPrice);
+    document.getElementById('product-carton-price')?.addEventListener('input', () => {
+        document.getElementById('product-carton-price').dataset.autoSet = 'false';
+    });
 
     // Customer form
     document.getElementById('add-customer-btn')?.addEventListener('click', () => openCustomerModal());
@@ -690,7 +693,8 @@ async function openProductModal(productId = null) {
                 document.getElementById('product-carton-price').value = p.carton_price;
                 document.getElementById('product-liter20-price').value = p.liter20_price;
                 document.getElementById('product-threshold').value = p.low_stock_threshold;
-                document.getElementById('product-carton-price').dataset.autoSet = 'false';
+                const cartonWasAuto = Math.abs(p.carton_price - (p.unit_price * 12)) < 0.01;
+                document.getElementById('product-carton-price').dataset.autoSet = cartonWasAuto ? 'true' : 'false';
             }).catch(err => showToast(err.message, 'error'));
     } else {
         document.getElementById('product-carton-price').dataset.autoSet = 'true';

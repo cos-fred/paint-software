@@ -191,7 +191,8 @@ router.post('/', requireAdmin, (req, res) => {
 router.put('/:id', requireAdmin, (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold } = req.body;
-        const calculatedCartonPrice = carton_price !== undefined ? carton_price : (unit_price !== undefined ? unit_price * 12 : undefined);
+        const hasCarton = carton_price !== undefined && carton_price !== null && carton_price !== '';
+        const calculatedCartonPrice = hasCarton ? carton_price : (unit_price !== undefined ? unit_price * 12 : undefined);
 
         if (sku !== undefined && sku) {
             if (db.prepare('SELECT id FROM products WHERE sku = ? AND id != ?').get(sku, req.params.id)) return res.status(400).json({ error: 'A product with this SKU already exists' });
