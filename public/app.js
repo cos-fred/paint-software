@@ -132,7 +132,6 @@ async function loadUser() {
         document.getElementById('profile-role').value = user.role;
         if (user.role === 'admin') {
             document.getElementById('user-management-card').style.display = '';
-            document.getElementById('warehouse-management-card').style.display = '';
             const auditNav = document.getElementById('audit-nav');
             if (auditNav) auditNav.style.display = '';
         }
@@ -293,6 +292,7 @@ function setupEventListeners() {
     document.getElementById('user-form')?.addEventListener('submit', handleUserSubmit);
 
     // Warehouses
+    document.getElementById('add-warehouse-btn')?.addEventListener('click', () => openAddWarehouseModal());
     document.getElementById('warehouse-form')?.addEventListener('submit', handleWarehouseSubmit);
 
     // Profile
@@ -378,6 +378,7 @@ function switchSection(section) {
     switch (section) {
         case 'dashboard': loadDashboard(); break;
         case 'stock': loadStock(); loadWarehouses(); break;
+        case 'warehouses': loadWarehouseManagement(); break;
         case 'products': loadWarehouses(); updateWarehouseScopeHints(); loadProducts(); break;
         case 'customers': loadCustomers(); break;
         case 'sales': loadSales(); break;
@@ -386,7 +387,7 @@ function switchSection(section) {
         case 'audit': loadAudit(); break;
         case 'reports': loadReports(); break;
         case 'alerts': loadAlerts(); break;
-        case 'settings': loadSettings(); if (currentUser?.role === 'admin') { loadUsers(); loadWarehouseManagement(); } break;
+        case 'settings': loadSettings(); if (currentUser?.role === 'admin') loadUsers(); break;
         case 'profile': break;
     }
 }
@@ -397,8 +398,9 @@ function switchSection(section) {
 
 async function loadWarehouses() {
     try {
-        const res = await fetchWithAuth(`${API_BASE}/products/warehouses`);
-        warehousesCache = await res.json();
+        const res = await fetchWithAuth(`${API_BASE}/warehouses`);
+        const all = await res.json();
+        warehousesCache = all.filter(w => w.is_active === 1);
         const selectors = ['warehouse-filter', 'stock-warehouse-filter', 'sale-warehouse', 'stock-adjust-warehouse', 'product-initial-warehouse'];
         selectors.forEach(id => {
             const select = document.getElementById(id);
@@ -1394,8 +1396,11 @@ function confirmDeleteUser(id, username) {
 
 async function loadWarehouseManagement() {
     try {
-        const res = await fetchWithAuth(`${API_BASE}/products/warehouses`);
+        const res = await fetchWithAuth(`${API_BASE}/warehouses`);
         const warehouses = await res.json();
+        const isAdmin = currentUser?.role === 'admin';
+        const addBtn = document.getElementById('add-warehouse-btn');
+        if (addBtn) addBtn.style.display = isAdmin ? '' : 'none';
         const tbody = document.querySelector('#warehouses-table tbody');
         if (!tbody) return;
         tbody.innerHTML = warehouses.map(w => `
@@ -1403,16 +1408,31 @@ async function loadWarehouseManagement() {
                 <td>${escapeHtml(w.name)}</td>
                 <td>${escapeHtml(w.code)}</td>
                 <td>${escapeHtml(w.city || '—')}</td>
-                <td><button class="action-btn edit" onclick="openWarehouseModal('${w.id}','${escapeHtml(w.name)}','${escapeHtml(w.code)}','${escapeHtml(w.city || '')}')">✏️ Rename</button></td>
+                <td><span class="status-badge ${w.is_active ? 'status-completed' : 'status-ordered'}">${w.is_active ? 'Active' : 'Inactive'}</span></td>
+                <td>${isAdmin ? `
+                    <button class="action-btn edit" onclick="openEditWarehouseModal('${w.id}','${escapeHtml(w.name)}','${escapeHtml(w.code)}','${escapeHtml(w.city || '')}','${escapeHtml(w.address || '')}','${escapeHtml(w.country || '')}')">✏️ Rename</button>
+                    ${w.is_active ? `<button class="action-btn delete" onclick="confirmDeactivateWarehouse('${w.id}','${escapeHtml(w.name)}')">🗑️ Deactivate</button>` : ''}
+                ` : ''}</td>
             </tr>`).join('');
     } catch (err) { console.error('Warehouses error:', err); }
 }
 
-function openWarehouseModal(id, name, code, city) {
+function openAddWarehouseModal() {
+    document.getElementById('warehouse-form').reset();
+    document.getElementById('warehouse-id').value = '';
+    document.getElementById('warehouse-country').value = 'Ghana';
+    document.getElementById('warehouse-modal-title').textContent = 'Add Warehouse';
+    showModal('warehouse-modal');
+}
+
+function openEditWarehouseModal(id, name, code, city, address, country) {
     document.getElementById('warehouse-id').value = id;
     document.getElementById('warehouse-name').value = name;
     document.getElementById('warehouse-code').value = code;
     document.getElementById('warehouse-city').value = city || '';
+    document.getElementById('warehouse-address').value = address || '';
+    document.getElementById('warehouse-country').value = country || 'Ghana';
+    document.getElementById('warehouse-modal-title').textContent = 'Rename Warehouse';
     showModal('warehouse-modal');
 }
 
@@ -1422,17 +1442,34 @@ async function handleWarehouseSubmit(e) {
     const data = {
         name: document.getElementById('warehouse-name').value.trim(),
         code: document.getElementById('warehouse-code').value.trim(),
-        city: document.getElementById('warehouse-city').value.trim()
+        city: document.getElementById('warehouse-city').value.trim(),
+        address: document.getElementById('warehouse-address').value.trim(),
+        country: document.getElementById('warehouse-country').value.trim()
     };
     try {
-        const res = await fetchWithAuth(`${API_BASE}/products/warehouses/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+        const url = id ? `${API_BASE}/warehouses/${id}` : `${API_BASE}/warehouses`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await fetchWithAuth(url, { method, body: JSON.stringify(data) });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error);
-        showToast('Warehouse renamed', 'success');
+        showToast(id ? 'Warehouse updated' : 'Warehouse added', 'success');
         closeModal('warehouse-modal');
         await loadWarehouses();
         await loadWarehouseManagement();
     } catch (err) { showToast(err.message, 'error'); }
+}
+
+function confirmDeactivateWarehouse(id, name) {
+    showConfirm(`Deactivate warehouse "${name}"? Its history will be kept.`, async () => {
+        try {
+            const res = await fetchWithAuth(`${API_BASE}/warehouses/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error);
+            showToast('Warehouse deactivated', 'success');
+            await loadWarehouses();
+            await loadWarehouseManagement();
+        } catch (err) { showToast(err.message, 'error'); }
+    });
 }
 
 async function handlePasswordChange(e) {

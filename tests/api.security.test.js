@@ -48,7 +48,7 @@ describe('API security', { concurrency: 1 }, () => {
         assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
         adminToken = adminLogin.body.token;
 
-        const warehouses = await request(server, { path: '/api/products/warehouses', token: adminToken });
+        const warehouses = await request(server, { path: '/api/warehouses', token: adminToken });
         assert.equal(warehouses.status, 200);
         warehouseId = warehouses.body[0].id;
 

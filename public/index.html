@@ -85,6 +85,10 @@
                             <span class="nav-icon">🏭</span>
                             <span>Stock</span>
                         </a>
+                        <a href="#" class="nav-item" data-section="warehouses">
+                            <span class="nav-icon">🏢</span>
+                            <span>Warehouses</span>
+                        </a>
                         <a href="#" class="nav-item" data-section="products">
                             <span class="nav-icon">📦</span>
                             <span>Products</span>
@@ -172,6 +176,27 @@
                                         <th>20L Stock</th>
                                         <th>Threshold</th>
                                         <th>Total Value</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section id="warehouses-section" class="content-section">
+                        <div class="section-header">
+                            <h2>Warehouses</h2>
+                            <button class="btn btn-primary" id="add-warehouse-btn">Add Warehouse</button>
+                        </div>
+                        <div class="table-container">
+                            <table id="warehouses-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Code</th>
+                                        <th>City</th>
                                         <th>Status</th>
                                         <th>Actions</th>
                                     </tr>
@@ -524,22 +549,6 @@
                                     </table>
                                 </div>
                                 <button class="btn btn-primary" id="add-user-btn">Add User</button>
-                            </div>
-                            <div class="card" id="warehouse-management-card" style="display: none;">
-                                <h3>Warehouse Management</h3>
-                                <div class="table-container">
-                                    <table id="warehouses-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Code</th>
-                                                <th>City</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody></tbody>
-                                    </table>
-                                </div>
                             </div>
                         </div>
                     </section>
@@ -1014,22 +1023,34 @@
     <div id="warehouse-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Rename Warehouse</h3>
+                <h3 id="warehouse-modal-title">Add Warehouse</h3>
                 <button class="modal-close" aria-label="Close">&times;</button>
             </div>
             <form id="warehouse-form">
                 <input type="hidden" id="warehouse-id">
-                <div class="form-group">
-                    <label>Name *</label>
-                    <input type="text" id="warehouse-name" required placeholder="Warehouse name">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" id="warehouse-name" required placeholder="Warehouse name">
+                    </div>
+                    <div class="form-group">
+                        <label>Code *</label>
+                        <input type="text" id="warehouse-code" required placeholder="e.g. WH003">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>City</label>
+                        <input type="text" id="warehouse-city" placeholder="City">
+                    </div>
+                    <div class="form-group">
+                        <label>Country</label>
+                        <input type="text" id="warehouse-country" placeholder="Ghana" value="Ghana">
+                    </div>
                 </div>
                 <div class="form-group">
-                    <label>Code</label>
-                    <input type="text" id="warehouse-code" placeholder="e.g. WH001">
-                </div>
-                <div class="form-group">
-                    <label>City</label>
-                    <input type="text" id="warehouse-city" placeholder="City">
+                    <label>Address</label>
+                    <input type="text" id="warehouse-address" placeholder="Street address">
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>

@@ -56,47 +56,6 @@ router.get('/', (req, res) => {
     }
 });
 
-router.get('/warehouses', (req, res) => {
-    try {
-        res.json(db.prepare('SELECT id, name, code, address, city, country, is_active FROM warehouses WHERE is_active = 1 ORDER BY name').all());
-    } catch (err) {
-        sendSafeError(res, err, '[products]');
-    }
-});
-
-router.put('/warehouses/:id', requireAdmin, (req, res) => {
-    try {
-        const { name, code, address, city, country } = req.body;
-        const existing = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(req.params.id);
-        if (!existing) return res.status(404).json({ error: 'Warehouse not found' });
-
-        if (name !== undefined && !String(name).trim()) {
-            return res.status(400).json({ error: 'Warehouse name cannot be empty' });
-        }
-        if (code !== undefined && !String(code).trim()) {
-            return res.status(400).json({ error: 'Warehouse code cannot be empty' });
-        }
-
-        const updates = [];
-        const params = [];
-        if (name !== undefined) { updates.push('name = ?'); params.push(String(name).trim()); }
-        if (code !== undefined) { updates.push('code = ?'); params.push(String(code).trim()); }
-        if (address !== undefined) { updates.push('address = ?'); params.push(address); }
-        if (city !== undefined) { updates.push('city = ?'); params.push(city); }
-        if (country !== undefined) { updates.push('country = ?'); params.push(country); }
-        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
-
-        updates.push('updated_at = CURRENT_TIMESTAMP');
-        params.push(req.params.id);
-
-        db.prepare(`UPDATE warehouses SET ${updates.join(', ')} WHERE id = ? AND is_active = 1`).run(...params);
-        logAudit(req.user.id, 'warehouse.update', 'warehouse', req.params.id, { name, code, city, country });
-        res.json({ message: 'Warehouse updated successfully' });
-    } catch (err) {
-        sendSafeError(res, err, '[products]');
-    }
-});
-
 router.get('/low-stock', (req, res) => {
     try {
         const { warehouse_id } = req.query;

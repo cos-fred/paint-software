@@ -29,6 +29,7 @@ const userRoutes = require('./routes/users');
 const transferRoutes = require('./routes/transfers');
 const returnRoutes = require('./routes/returns');
 const auditRoutes = require('./routes/audit');
+const warehouseRoutes = require('./routes/warehouses');
 
 const PORT = process.env.PORT || 3000;
 
@@ -66,6 +67,7 @@ function createApp() {
     app.use('/api/transfers', transferRoutes);
     app.use('/api/returns', returnRoutes);
     app.use('/api/audit', auditRoutes);
+    app.use('/api/warehouses', warehouseRoutes);
 
     app.use(express.static(path.join(__dirname, 'public')));
 
