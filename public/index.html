@@ -564,6 +564,11 @@
                                 </div>
                                 <button class="btn btn-primary" id="add-user-btn">Add User</button>
                             </div>
+                            <div class="card danger-zone" id="reset-card" style="display: none;">
+                                <h3>Danger Zone</h3>
+                                <p style="color:var(--text-muted); margin-bottom:12px;">Permanently delete all data — products, stock, sales, customers, warehouses, users and settings — and restore the app to a fresh state. Your admin account is preserved.</p>
+                                <button type="button" class="btn btn-danger" id="reset-system-btn">Reset System</button>
+                            </div>
                         </div>
                     </section>
 
@@ -1107,6 +1112,45 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="reset-confirm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Reset System</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body" style="padding:16px;">
+                <p style="color:var(--danger); font-weight:600;">This will permanently erase ALL business data.</p>
+                <p style="color:var(--text-muted);">Products, stock, sales, customers, warehouses, other users and settings will be deleted. This cannot be undone.</p>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                <button type="button" class="btn btn-danger" id="reset-continue-btn">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="reset-password-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Confirm Reset</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="reset-password-form">
+                <div class="modal-body" style="padding:16px;">
+                    <p style="color:var(--text-muted);">Enter your administrator password to confirm the reset.</p>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="reset-password" required placeholder="Your password">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Reset Everything</button>
                 </div>
             </form>
         </div>

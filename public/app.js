@@ -177,6 +177,8 @@ async function loadUser() {
             document.getElementById('user-management-card').style.display = '';
             const auditNav = document.getElementById('audit-nav');
             if (auditNav) auditNav.style.display = '';
+            const resetCard = document.getElementById('reset-card');
+            if (resetCard) resetCard.style.display = (user.username === 'admin') ? '' : 'none';
         }
         applyTotalValueVisibility();
         return user;
@@ -353,6 +355,15 @@ function setupEventListeners() {
     // Warehouses
     document.getElementById('add-warehouse-btn')?.addEventListener('click', () => openAddWarehouseModal());
     document.getElementById('warehouse-form')?.addEventListener('submit', handleWarehouseSubmit);
+
+    // System reset
+    document.getElementById('reset-system-btn')?.addEventListener('click', () => showModal('reset-confirm-modal'));
+    document.getElementById('reset-continue-btn')?.addEventListener('click', () => {
+        closeModal('reset-confirm-modal');
+        document.getElementById('reset-password').value = '';
+        showModal('reset-password-modal');
+    });
+    document.getElementById('reset-password-form')?.addEventListener('submit', handleSystemReset);
 
     // Profile
     document.getElementById('change-password-btn')?.addEventListener('click', () => showModal('password-modal'));
@@ -1623,6 +1634,23 @@ function confirmDeactivateWarehouse(id, name) {
             await loadWarehouseManagement();
         } catch (err) { showToast(err.message, 'error'); }
     });
+}
+
+async function handleSystemReset(e) {
+    e.preventDefault();
+    const password = document.getElementById('reset-password').value;
+    if (!password) { showToast('Password is required', 'error'); return; }
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/system/reset`, { method: 'POST', body: JSON.stringify({ password }) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
+        closeModal('reset-password-modal');
+        document.getElementById('reset-password').value = '';
+        showToast('System reset successfully', 'success');
+        await loadWarehouses();
+        await loadSettings();
+        switchSection('dashboard');
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function handlePasswordChange(e) {

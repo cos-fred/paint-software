@@ -244,12 +244,7 @@ function initializeDatabase() {
 
     const warehouseCount = db.prepare('SELECT COUNT(*) as count FROM warehouses').get().count;
     if (warehouseCount === 0) {
-        const warehouses = [
-            { id: uuidv4(), name: 'Main Warehouse', code: 'WH001', address: '123 Industrial Ave', city: 'Accra', country: 'Ghana' },
-            { id: uuidv4(), name: 'Secondary Warehouse', code: 'WH002', address: '456 Commerce Rd', city: 'Tema', country: 'Ghana' }
-        ];
-        const insert = db.prepare('INSERT INTO warehouses (id, name, code, address, city, country) VALUES (?, ?, ?, ?, ?, ?)');
-        for (const w of warehouses) insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
+        seedDefaultWarehouses();
     }
 
     // Initial admin account — no hardcoded default password, and never reset
@@ -282,8 +277,41 @@ function insertDefaultSettings() {
     for (const s of settings) insert.run(s.key, s.value, s.description);
 }
 
+function seedDefaultWarehouses() {
+    const warehouses = [
+        { id: uuidv4(), name: 'Main Warehouse', code: 'WH001', address: '123 Industrial Ave', city: 'Accra', country: 'Ghana' },
+        { id: uuidv4(), name: 'Secondary Warehouse', code: 'WH002', address: '456 Commerce Rd', city: 'Tema', country: 'Ghana' }
+    ];
+    const insert = db.prepare('INSERT INTO warehouses (id, name, code, address, city, country) VALUES (?, ?, ?, ?, ?, ?)');
+    for (const w of warehouses) insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
+}
+
+// Completely wipe business data and reset to a fresh state, preserving only the
+// given admin account. Re-seeds default warehouses and settings.
+function resetDatabase(adminId) {
+    const transaction = db.transaction(() => {
+        db.prepare('DELETE FROM sale_returns').run();
+        db.prepare('DELETE FROM sale_items').run();
+        db.prepare('DELETE FROM stock_movements').run();
+        db.prepare('DELETE FROM stock_transfers').run();
+        db.prepare('DELETE FROM sales').run();
+        db.prepare('DELETE FROM alerts').run();
+        db.prepare('DELETE FROM product_stock').run();
+        db.prepare('DELETE FROM products').run();
+        db.prepare('DELETE FROM customers').run();
+        db.prepare('DELETE FROM audit_logs').run();
+        db.prepare('DELETE FROM users WHERE id != ?').run(adminId);
+        db.prepare('DELETE FROM warehouses').run();
+        db.prepare('DELETE FROM settings').run();
+    });
+    transaction();
+
+    seedDefaultWarehouses();
+    insertDefaultSettings();
+}
+
 function getDb() {
     return db;
 }
 
-module.exports = { initializeDatabase, getDb };
+module.exports = { initializeDatabase, getDb, resetDatabase };

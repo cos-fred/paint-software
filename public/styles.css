@@ -1634,3 +1634,6 @@ td .action-btn { margin: 2px; }
 
 /* Hide total inventory value column for non-admins / when toggled off */
 body.hide-total-value .total-value-col { display: none; }
+
+/* Danger zone card in settings */
+.danger-zone { border: 1px solid var(--danger); background: #fef2f2; }
