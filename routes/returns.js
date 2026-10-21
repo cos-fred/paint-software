@@ -5,7 +5,7 @@ const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { stockColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
-const { parsePositiveInteger } = require('../lib/validation');
+const { parsePositiveInteger, parseLimit } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -20,7 +20,7 @@ router.get('/', (req, res) => {
         const params = [];
         if (sale_id) { query += ' WHERE sr.sale_id = ?'; params.push(sale_id); }
         query += ' ORDER BY sr.created_at DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(parseLimit(limit, 100));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         sendSafeError(res, err, '[returns]');
@@ -74,7 +74,8 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
                     .run(returnId, sale_id, product_id, sale.warehouse_id, unit_type, quantity, unitPrice, lineTotal, reason || null, req.user.id);
 
                 const stockField = stockColumn(unit_type);
-                db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, sale.warehouse_id);
+                const restored = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, sale.warehouse_id);
+                if (restored.changes === 0) throw new ClientError(409, 'Product stock row not found for this warehouse');
 
                 db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, notes, created_by) VALUES (?, ?, ?, 'return_in', ?, ?, ?, 'return', ?, ?)`)
                     .run(uuidv4(), product_id, sale.warehouse_id, unit_type, quantity, returnId, reason || null, req.user.id);

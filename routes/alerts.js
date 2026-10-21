@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../database');
 const { authenticateToken } = require('../auth');
+const { parseLimit } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -22,7 +23,7 @@ router.get('/', (req, res) => {
         }
 
         query += ' ORDER BY a.created_at DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(parseLimit(limit, 50));
 
         const rows = db.prepare(query).all(...params);
         res.json(rows);

@@ -43,7 +43,20 @@ function createApp() {
 
     const allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGIN, process.env.NODE_ENV);
 
-    app.use(helmet({ contentSecurityPolicy: false }));
+    app.use(helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:"],
+                connectSrc: ["'self'", "ws:", "wss:"],
+                objectSrc: ["'none'"],
+                baseUri: ["'self'"],
+                frameAncestors: ["'none'"]
+            }
+        }
+    }));
     app.use(cors({ origin: corsOriginOption(allowedOrigins), credentials: true }));
     app.use(express.json({ limit: '1mb' }));
     app.use(express.urlencoded({ extended: true }));
@@ -107,7 +120,8 @@ function startServer() {
         const app = createApp();
         const server = http.createServer(app);
         if (process.env.NODE_ENV !== 'test') {
-            initRealtime(server);
+            const allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGIN, process.env.NODE_ENV);
+            initRealtime(server, allowedOrigins);
         }
 
         server.listen(PORT, () => {

@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../database');
 const { authenticateToken } = require('../auth');
+const { parseLimit, parseOffset } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -28,6 +29,8 @@ router.get('/inventory', (req, res) => {
 
         const rows = db.prepare(query).all(...params);
 
+        const isAdmin = req.user.role === 'admin';
+
         let products = rows;
         if (!warehouse_id) {
             for (const p of products) {
@@ -46,13 +49,23 @@ router.get('/inventory', (req, res) => {
             p.liter20_stock <= p.low_stock_threshold
         );
 
+        // Enforce total-value visibility on the server, not just in the UI.
+        if (!isAdmin) {
+            for (const p of products) {
+                delete p.carton_value;
+                delete p.liter20_value;
+            }
+        }
+
+        const summary = {
+            total_products: rows.length,
+            total_stock_items: totalUnits,
+            low_stock_count: lowStockItems.length
+        };
+        if (isAdmin) summary.total_inventory_value = totalValue;
+
         res.json({
-            summary: {
-                total_products: rows.length,
-                total_inventory_value: totalValue,
-                total_stock_items: totalUnits,
-                low_stock_count: lowStockItems.length
-            },
+            summary,
             products,
             low_stock_items: lowStockItems
         });
@@ -89,7 +102,7 @@ router.get('/sales/by-product', (req, res) => {
         if (end_date) { query += ' AND s.sale_date <= ?'; params.push(end_date + ' 23:59:59'); }
         if (warehouse_id) { query += ' AND si.warehouse_id = ?'; params.push(warehouse_id); }
         query += ' GROUP BY p.id, p.name ORDER BY total_revenue DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(parseLimit(limit, 20));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -106,7 +119,7 @@ router.get('/sales/by-customer', (req, res) => {
         if (end_date) { query += ' AND s.sale_date <= ?'; params.push(end_date + ' 23:59:59'); }
         if (warehouse_id) { query += ' AND s.warehouse_id = ?'; params.push(warehouse_id); }
         query += ' GROUP BY c.id, c.name, c.email, c.phone ORDER BY total_spent DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(parseLimit(limit, 20));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -141,7 +154,7 @@ router.get('/stock-movements', (req, res) => {
         if (start_date) { query += ' AND sm.created_at >= ?'; params.push(start_date); }
         if (end_date) { query += ' AND sm.created_at <= ?'; params.push(end_date + ' 23:59:59'); }
         query += ' ORDER BY sm.created_at DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(parseLimit(limit, 100), parseOffset(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });

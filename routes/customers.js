@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
+const { parseLimit, parseOffset } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -22,7 +23,7 @@ router.get('/', (req, res) => {
         const params = [];
         if (search) { query += ' AND (c.name LIKE ? OR c.email LIKE ? OR c.phone LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
         query += ' ORDER BY c.name ASC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(parseLimit(limit, 100), parseOffset(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -47,7 +48,7 @@ router.get('/:id/purchases', (req, res) => {
         const params = [req.params.id];
         if (warehouse_id) { query += ' AND s.warehouse_id = ?'; params.push(warehouse_id); }
         query += ' ORDER BY s.sale_date DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(parseLimit(limit, 50), parseOffset(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -97,9 +98,10 @@ router.put('/:id', (req, res) => {
 
 router.delete('/:id', requireAdmin, (req, res) => {
     try {
-        const result = db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
+        // Soft-delete so historical sales keep their customer reference.
+        const result = db.prepare('UPDATE customers SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1').run(req.params.id);
         if (result.changes === 0) return res.status(404).json({ error: 'Customer not found' });
-        logAudit(req.user.id, 'customer.delete', 'customer', req.params.id);
+        logAudit(req.user.id, 'customer.archive', 'customer', req.params.id);
         res.json({ message: 'Customer deleted successfully' });
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });

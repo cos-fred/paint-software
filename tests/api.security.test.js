@@ -284,7 +284,7 @@ describe('API security', { concurrency: 1 }, () => {
             token: extraToken,
             body: { name: 'Should Fail', unit_price: 5, warehouse_id: warehouseId }
         });
-        assert.equal(afterDemote.status, 403);
+        assert.equal(afterDemote.status, 401);
 
         const disable = await request(server, {
             method: 'PUT',
@@ -304,7 +304,7 @@ describe('API security', { concurrency: 1 }, () => {
         });
         assert.equal(change.status, 200, JSON.stringify(change.body));
         const stale = await request(server, { path: '/api/products', token: staffToken });
-        assert.equal(stale.status, 403);
+        assert.equal(stale.status, 401);
         const fresh = await login(STAFF_USER, 'StaffPass456');
         assert.equal(fresh.status, 200);
         const ok = await request(server, { path: '/api/products', token: fresh.body.token });

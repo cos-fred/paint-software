@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
+const { parseLimit } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -15,7 +16,7 @@ router.get('/', (req, res) => {
         const params = [];
         if (search) { query += ' WHERE al.action LIKE ? OR al.entity_type LIKE ?'; params.push(`%${search}%`, `%${search}%`); }
         query += ' ORDER BY al.created_at DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(parseLimit(limit, 200));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });

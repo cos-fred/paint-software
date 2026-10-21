@@ -1637,3 +1637,6 @@ body.hide-total-value .total-value-col { display: none; }
 
 /* Danger zone card in settings */
 .danger-zone { border: 1px solid var(--danger); background: #fef2f2; }
+
+/* Admin-only settings cards */
+.admin-only-card { display: none; }

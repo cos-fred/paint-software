@@ -6,7 +6,7 @@ const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
 const { stockColumn, priceColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
-const { parsePositiveInteger, parseFiniteNumber } = require('../lib/validation');
+const { parsePositiveInteger, parseFiniteNumber, parseLimit, parseOffset } = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
 
 const router = express.Router();
@@ -68,7 +68,7 @@ router.get('/', (req, res) => {
         if (warehouse_id) { query += ' AND s.warehouse_id = ?'; params.push(warehouse_id); }
         if (search) { query += ' AND (c.name LIKE ? OR s.payment_method LIKE ? OR s.notes LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
         query += ' ORDER BY s.sale_date DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit, 10) || 100, parseInt(offset, 10) || 0);
+        params.push(parseLimit(limit, 100), parseOffset(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         sendSafeError(res, err, '[sales]');
@@ -178,6 +178,9 @@ router.post('/', (req, res) => {
         if (!warehouse_id) return res.status(400).json({ error: 'Warehouse is required' });
         if (!items || items.length === 0) return res.status(400).json({ error: 'At least one item is required' });
 
+        const warehouse = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(warehouse_id);
+        if (!warehouse) return res.status(400).json({ error: 'Warehouse not found or inactive' });
+
         const method = payment_method || 'cash';
         const status = payment_status || 'completed';
         if (!PAYMENT_METHODS.includes(method)) return res.status(400).json({ error: 'Invalid payment method' });
@@ -200,7 +203,7 @@ router.post('/', (req, res) => {
             const row = db.prepare(
                 `SELECT ps.${stockField} as stock, p.name, p.${priceField} as price
                  FROM product_stock ps JOIN products p ON ps.product_id = p.id
-                 WHERE ps.product_id = ? AND ps.warehouse_id = ?`
+                 WHERE ps.product_id = ? AND ps.warehouse_id = ? AND p.is_active = 1`
             ).get(item.product_id, warehouse_id);
             if (!row) throw new ClientError(400, 'Product not found in warehouse');
             if (row.stock < quantity) throw new ClientError(400, `Insufficient stock for ${row.name}`);
@@ -296,7 +299,7 @@ function applyStatusChange(saleId, nextStatus, userId) {
             'UPDATE sales SET payment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND payment_status = ?'
         ).run(nextStatus, saleId, sale.payment_status);
         if (result.changes === 0) throw new ClientError(409, 'Sale was updated by another request');
-        if (shouldRestock) restockSale(saleId, sale.warehouse_id, userId, nextStatus === 'refunded' ? 'sale_return' : 'sale_return');
+        if (shouldRestock) restockSale(saleId, sale.warehouse_id, userId, 'sale_return');
     });
     transaction();
     return sale;

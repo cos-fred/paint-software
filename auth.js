@@ -59,7 +59,7 @@ function authenticateToken(req, res, next) {
 
     const decoded = verifyToken(token);
     if (!decoded || !decoded.id) {
-        return res.status(403).json({ error: 'Invalid or expired token' });
+        return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
     let current;
@@ -69,13 +69,17 @@ function authenticateToken(req, res, next) {
         return res.status(500).json({ error: 'Something went wrong' });
     }
 
-    if (!current || !current.is_active) {
+    if (!current) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    if (!current.is_active) {
         return res.status(403).json({ error: 'Account is disabled' });
     }
 
     const tokenVersion = decoded.token_version || 0;
     if (tokenVersion !== (current.token_version || 0)) {
-        return res.status(403).json({ error: 'Invalid or expired token' });
+        return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
     req.user = {

@@ -12,6 +12,9 @@ let showTotalValue = true;
 let forcePasswordChange = false;
 let confirmCallback = null;
 let saleWarehouseChangeHandler = null;
+let currencySymbol = '₵';
+let defaultThreshold = 10;
+const CURRENCY_SYMBOLS = { GHS: '₵', USD: '$', GBP: '£', EUR: '€', NGN: '₦', ZAR: 'R' };
 
 // ===================================================
 // CORE UTILITIES
@@ -39,7 +42,7 @@ function updateWarehouseScopeHints() {
 
 function formatCurrency(amount) {
     const num = parseFloat(amount) || 0;
-    return '₵' + num.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return currencySymbol + num.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatSaleUnitType(type) {
@@ -52,6 +55,15 @@ function escapeHtml(text) {
     const d = document.createElement('div');
     d.textContent = String(text);
     return d.innerHTML;
+}
+
+function escapeAttr(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function showToast(message, type = 'info') {
@@ -179,6 +191,7 @@ async function loadUser() {
             if (auditNav) auditNav.style.display = '';
             const resetCard = document.getElementById('reset-card');
             if (resetCard) resetCard.style.display = (user.username === 'admin') ? '' : 'none';
+            document.querySelectorAll('.admin-only-card').forEach(c => c.style.display = '');
         }
         applyTotalValueVisibility();
         return user;
@@ -226,6 +239,33 @@ async function init() {
 // ===================================================
 
 function setupEventListeners() {
+    // Delegated handler for action buttons rendered in dynamic tables. Values are
+    // passed via data-* attributes (escaped) instead of inline onclick handlers.
+    document.addEventListener('click', (e) => {
+        const el = e.target.closest('[data-action]');
+        if (!el) return;
+        const d = el.dataset;
+        switch (d.action) {
+            case 'open-stock-adjust': openStockAdjustModal(d.id, d.name); break;
+            case 'edit-product': editProduct(d.id); break;
+            case 'delete-product': confirmDeleteProduct(d.id, d.name); break;
+            case 'edit-customer': editCustomer(d.id); break;
+            case 'delete-customer': confirmDeleteCustomer(d.id, d.name); break;
+            case 'view-receipt': viewReceipt(d.id); break;
+            case 'open-return': openReturnModal(d.id); break;
+            case 'mark-paid': markSalePaid(d.id); break;
+            case 'edit-sale-status': editSaleStatus(d.id, d.status); break;
+            case 'delete-sale': confirmDeleteSale(d.id); break;
+            case 'mark-alert-read': markAlertRead(d.id); break;
+            case 'delete-alert': confirmDeleteAlert(d.id); break;
+            case 'edit-user': editUser(d.id); break;
+            case 'revoke-sessions': confirmRevokeSessions(d.id, d.name); break;
+            case 'delete-user': confirmDeleteUser(d.id, d.name); break;
+            case 'edit-warehouse': openEditWarehouseModal(d.id, d.name, d.code, d.city, d.address, d.country); break;
+            case 'deactivate-warehouse': confirmDeactivateWarehouse(d.id, d.name); break;
+        }
+    });
+
     // Login form
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
@@ -620,7 +660,7 @@ async function loadStock() {
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
                 <td><span class="status-badge ${isLow ? 'status-pending' : 'status-completed'}">${isLow ? 'Low Stock' : 'OK'}</span></td>
-                <td><button class="action-btn edit" onclick="openStockAdjustModal('${p.id}','${escapeHtml(p.name)}')">⚙️ Adjust</button></td>
+                <td><button class="action-btn edit" data-action="open-stock-adjust" data-id="${p.id}" data-name="${escapeAttr(p.name)}">⚙️ Adjust</button></td>
             </tr>`;
         }).join('');
     } catch (err) {
@@ -732,8 +772,8 @@ async function loadProducts() {
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
                 <td>
-                    <button class="action-btn edit" onclick="editProduct('${p.id}')">✏️ Edit</button>
-                    <button class="action-btn delete" onclick="confirmDeleteProduct('${p.id}','${escapeHtml(p.name)}')">🗑️ Delete</button>
+                    <button class="action-btn edit" data-action="edit-product" data-id="${p.id}">✏️ Edit</button>
+                    <button class="action-btn delete" data-action="delete-product" data-id="${p.id}" data-name="${escapeAttr(p.name)}">🗑️ Delete</button>
                 </td>
             </tr>`;
         }).join('');
@@ -748,7 +788,7 @@ async function openProductModal(productId = null) {
     form.reset();
     document.getElementById('product-id').value = '';
     document.getElementById('product-modal-title').textContent = 'Add Product';
-    document.getElementById('product-threshold').value = 10;
+    document.getElementById('product-threshold').value = defaultThreshold;
     const stockSection = document.getElementById('product-initial-stock-section');
     const whSelect = document.getElementById('product-initial-warehouse');
     if (stockSection) stockSection.style.display = '';
@@ -878,8 +918,8 @@ async function loadCustomers() {
                 <td>${formatCurrency(c.total_spent ?? 0)}</td>
                 <td>${c.last_purchase ? new Date(c.last_purchase).toLocaleDateString() : '—'}</td>
                 <td>
-                    <button class="action-btn edit" onclick="editCustomer('${c.id}')">✏️ Edit</button>
-                    <button class="action-btn delete" onclick="confirmDeleteCustomer('${c.id}','${escapeHtml(c.name)}')">🗑️ Delete</button>
+                    <button class="action-btn edit" data-action="edit-customer" data-id="${c.id}">✏️ Edit</button>
+                    <button class="action-btn delete" data-action="delete-customer" data-id="${c.id}" data-name="${escapeAttr(c.name)}">🗑️ Delete</button>
                 </td>
             </tr>`).join('');
     } catch (err) {
@@ -1008,12 +1048,12 @@ async function loadSales() {
                 <td>${escapeHtml(s.payment_method)}</td>
                 <td><span class="status-badge status-${s.payment_status}">${s.payment_status}</span></td>
                 <td>
-                    <button class="action-btn view" onclick="viewReceipt('${s.id}')">👁️ View</button>
-                    <button class="action-btn view" onclick="openReturnModal('${s.id}')">↩️ Return</button>
-                    ${s.payment_status === 'pending' ? `<button class="action-btn edit" onclick="markSalePaid('${s.id}')">💵 Mark Paid</button>` : ''}
+                    <button class="action-btn view" data-action="view-receipt" data-id="${s.id}">👁️ View</button>
+                    <button class="action-btn view" data-action="open-return" data-id="${s.id}">↩️ Return</button>
+                    ${s.payment_status === 'pending' ? `<button class="action-btn edit" data-action="mark-paid" data-id="${s.id}">💵 Mark Paid</button>` : ''}
                     ${isAdmin ? `
-                        <button class="action-btn edit" onclick="editSaleStatus('${s.id}','${s.payment_status}')">✏️ Status</button>
-                        <button class="action-btn delete" onclick="confirmDeleteSale('${s.id}')">🗑️ Delete</button>
+                        <button class="action-btn edit" data-action="edit-sale-status" data-id="${s.id}" data-status="${s.payment_status}">✏️ Status</button>
+                        <button class="action-btn delete" data-action="delete-sale" data-id="${s.id}">🗑️ Delete</button>
                     ` : ''}
                 </td>
             </tr>`).join('');
@@ -1352,8 +1392,8 @@ async function loadAlerts() {
                 <td><span class="status-badge status-${a.severity === 'danger' ? 'cancelled' : a.severity === 'warning' ? 'pending' : 'ordered'}">${a.severity}</span></td>
                 <td>${new Date(a.created_at).toLocaleString()}</td>
                 <td>
-                    ${!a.is_read ? `<button class="action-btn edit" onclick="markAlertRead('${a.id}')">✓ Read</button>` : ''}
-                    <button class="action-btn delete" onclick="confirmDeleteAlert('${a.id}')">🗑️</button>
+                    ${!a.is_read ? `<button class="action-btn edit" data-action="mark-alert-read" data-id="${a.id}">✓ Read</button>` : ''}
+                    <button class="action-btn delete" data-action="delete-alert" data-id="${a.id}">🗑️</button>
                 </td>
             </tr>`).join('');
     } catch (err) {
@@ -1398,7 +1438,13 @@ async function loadSettings() {
         const settings = await res.json();
         settings.forEach(s => {
             const el = document.getElementById(`setting-${s.key}`);
-            if (el) el.value = s.value;
+            if (!el) return;
+            // tax_rate is stored as a fraction (0.10 = 10%) but shown as a percentage.
+            if (s.key === 'tax_rate') {
+                el.value = String((Number.isFinite(parseFloat(s.value)) ? parseFloat(s.value) : 0) * 100);
+            } else {
+                el.value = s.value;
+            }
         });
         const tr = settings.find(s => s.key === 'tax_rate');
         if (tr) taxRate = Number.isFinite(parseFloat(tr.value)) ? parseFloat(tr.value) : 0;
@@ -1406,6 +1452,10 @@ async function loadSettings() {
         if (te) taxEnabled = te.value !== 'false';
         const sv = settings.find(s => s.key === 'show_total_value');
         if (sv) showTotalValue = sv.value !== 'false';
+        const cur = settings.find(s => s.key === 'currency');
+        if (cur) currencySymbol = CURRENCY_SYMBOLS[cur.value] || (cur.value ? cur.value + ' ' : '₵');
+        const th = settings.find(s => s.key === 'low_stock_threshold_default');
+        if (th) defaultThreshold = Number.isSafeInteger(parseInt(th.value, 10)) && parseInt(th.value, 10) >= 0 ? parseInt(th.value, 10) : 10;
         applyTotalValueVisibility();
     } catch (err) { console.error('Settings error:', err); }
 }
@@ -1428,9 +1478,17 @@ async function handleSystemSettings(e) {
     try {
         for (const key of fields) {
             const el = document.getElementById(`setting-${key}`);
-            if (el) await fetchWithAuth(`${API_BASE}/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value: el.value }) });
+            if (!el) continue;
+            let value = el.value;
+            // tax_rate is shown as a percentage but stored as a fraction.
+            if (key === 'tax_rate') {
+                const pct = parseFloat(el.value);
+                value = String(Number.isFinite(pct) ? pct / 100 : 0);
+            }
+            await fetchWithAuth(`${API_BASE}/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) });
         }
-        taxRate = Number.isFinite(parseFloat(document.getElementById('setting-tax_rate')?.value)) ? parseFloat(document.getElementById('setting-tax_rate')?.value) : 0;
+        const taxRatePct = parseFloat(document.getElementById('setting-tax_rate')?.value);
+        taxRate = (Number.isFinite(taxRatePct) ? taxRatePct : 0) / 100;
         taxEnabled = document.getElementById('setting-tax_enabled')?.value !== 'false';
         showTotalValue = document.getElementById('setting-show_total_value')?.value !== 'false';
         applyTotalValueVisibility();
@@ -1456,9 +1514,9 @@ async function loadUsers() {
                 <td>${new Date(u.created_at).toLocaleDateString()}</td>
                 <td>
                     ${u.id !== currentUser?.id ? `
-                        <button class="action-btn edit" onclick="editUser('${u.id}')">✏️ Edit</button>
-                        <button class="action-btn view" onclick="confirmRevokeSessions('${u.id}','${escapeHtml(u.username)}')">🔒 Sign Out</button>
-                        <button class="action-btn delete" onclick="confirmDeleteUser('${u.id}','${escapeHtml(u.username)}')">🗑️ Delete</button>
+                        <button class="action-btn edit" data-action="edit-user" data-id="${u.id}">✏️ Edit</button>
+                        <button class="action-btn view" data-action="revoke-sessions" data-id="${u.id}" data-name="${escapeAttr(u.username)}">🔒 Sign Out</button>
+                        <button class="action-btn delete" data-action="delete-user" data-id="${u.id}" data-name="${escapeAttr(u.username)}">🗑️ Delete</button>
                     ` : '<span style="color:var(--text-muted)">You</span>'}
                 </td>
             </tr>`).join('');
@@ -1574,8 +1632,8 @@ async function loadWarehouseManagement() {
                 <td>${escapeHtml(w.city || '—')}</td>
                 <td><span class="status-badge ${w.is_active ? 'status-completed' : 'status-ordered'}">${w.is_active ? 'Active' : 'Inactive'}</span></td>
                 <td>${isAdmin ? `
-                    <button class="action-btn edit" onclick="openEditWarehouseModal('${w.id}','${escapeHtml(w.name)}','${escapeHtml(w.code)}','${escapeHtml(w.city || '')}','${escapeHtml(w.address || '')}','${escapeHtml(w.country || '')}')">✏️ Rename</button>
-                    ${w.is_active ? `<button class="action-btn delete" onclick="confirmDeactivateWarehouse('${w.id}','${escapeHtml(w.name)}')">🗑️ Deactivate</button>` : ''}
+                    <button class="action-btn edit" data-action="edit-warehouse" data-id="${w.id}" data-name="${escapeAttr(w.name)}" data-code="${escapeAttr(w.code)}" data-city="${escapeAttr(w.city || '')}" data-address="${escapeAttr(w.address || '')}" data-country="${escapeAttr(w.country || '')}">✏️ Rename</button>
+                    ${w.is_active ? `<button class="action-btn delete" data-action="deactivate-warehouse" data-id="${w.id}" data-name="${escapeAttr(w.name)}">🗑️ Deactivate</button>` : ''}
                 ` : ''}</td>
             </tr>`).join('');
     } catch (err) { console.error('Warehouses error:', err); }

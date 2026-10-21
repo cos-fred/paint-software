@@ -6,7 +6,7 @@ const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
 const { stockColumn } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
-const { parsePositiveInteger, parseNonNegativeInteger } = require('../lib/validation');
+const { parsePositiveInteger, parseNonNegativeInteger, parseNonNegativeNumber, round2, parseLimit, parseOffset } = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
 
 const router = express.Router();
@@ -114,6 +114,13 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
         const warehouse = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(warehouse_id);
         if (!warehouse) return res.status(400).json({ error: 'Invalid warehouse' });
 
+        const validatedUnitPrice = parseNonNegativeNumber(unit_price, 'Unit price');
+        const validatedLiter20Price = parseNonNegativeNumber(liter20_price ?? 0, '20L price');
+        const validatedThreshold = parseNonNegativeInteger(low_stock_threshold ?? 10, 'Low stock threshold');
+        const validatedCartonPrice = (carton_price !== undefined && carton_price !== null && carton_price !== '')
+            ? parseNonNegativeNumber(carton_price, 'Carton price')
+            : round2(validatedUnitPrice * 12);
+
         const initialCartons = parseNonNegativeInteger(carton_stock ?? 0, 'Initial carton stock');
         const initialLiter20 = parseNonNegativeInteger(liter20_stock ?? 0, 'Initial 20L stock');
         const targetWarehouseId = String(warehouse_id).trim();
@@ -123,11 +130,10 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
         }
 
         const id = uuidv4();
-        const calculatedCartonPrice = carton_price !== undefined && carton_price !== null ? carton_price : unit_price * 12;
 
         const transaction = db.transaction(() => {
             db.prepare(`INSERT INTO products (id, name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(id, name, description, sku || null, unit_price, calculatedCartonPrice, liter20_price || 0, low_stock_threshold || 10);
+                .run(id, name, description, sku || null, validatedUnitPrice, validatedCartonPrice, validatedLiter20Price, validatedThreshold);
 
             const warehouses = db.prepare('SELECT id FROM warehouses WHERE is_active = 1').all();
             const stockInsert = db.prepare(`INSERT INTO product_stock (id, product_id, warehouse_id, carton_stock, liter20_stock) VALUES (?, ?, ?, ?, ?)`);
@@ -143,7 +149,7 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
         transaction();
 
         logAudit(req.user.id, 'product.create', 'product', id, { name });
-        res.status(201).json({ id, name, unit_price, carton_price: calculatedCartonPrice, liter20_price: liter20_price || 0, warehouse_id: targetWarehouseId, carton_stock: initialCartons, liter20_stock: initialLiter20 });
+        res.status(201).json({ id, name, unit_price: validatedUnitPrice, carton_price: validatedCartonPrice, liter20_price: validatedLiter20Price, warehouse_id: targetWarehouseId, carton_stock: initialCartons, liter20_stock: initialLiter20 });
     } catch (err) {
         sendSafeError(res, err, '[products]');
     }
@@ -152,8 +158,6 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
 router.put('/:id', requirePermission('manage_products'), (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold } = req.body;
-        const hasCarton = carton_price !== undefined && carton_price !== null && carton_price !== '';
-        const calculatedCartonPrice = hasCarton ? carton_price : (unit_price !== undefined ? unit_price * 12 : undefined);
 
         if (sku !== undefined && sku) {
             if (db.prepare('SELECT id FROM products WHERE sku = ? AND id != ?').get(sku, req.params.id)) return res.status(400).json({ error: 'A product with this SKU already exists' });
@@ -164,10 +168,24 @@ router.put('/:id', requirePermission('manage_products'), (req, res) => {
         if (name !== undefined) { updates.push('name = ?'); params.push(name); }
         if (description !== undefined) { updates.push('description = ?'); params.push(description); }
         if (sku !== undefined) { updates.push('sku = ?'); params.push(sku || null); }
-        if (unit_price !== undefined) { updates.push('unit_price = ?'); params.push(unit_price); }
-        if (calculatedCartonPrice !== undefined) { updates.push('carton_price = ?'); params.push(calculatedCartonPrice); }
-        if (liter20_price !== undefined) { updates.push('liter20_price = ?'); params.push(liter20_price); }
-        if (low_stock_threshold !== undefined) { updates.push('low_stock_threshold = ?'); params.push(low_stock_threshold); }
+
+        let validatedUnitPrice;
+        if (unit_price !== undefined) {
+            validatedUnitPrice = parseNonNegativeNumber(unit_price, 'Unit price');
+            updates.push('unit_price = ?'); params.push(validatedUnitPrice);
+        }
+        if (carton_price !== undefined && carton_price !== null && carton_price !== '') {
+            updates.push('carton_price = ?'); params.push(parseNonNegativeNumber(carton_price, 'Carton price'));
+        } else if (validatedUnitPrice !== undefined) {
+            updates.push('carton_price = ?'); params.push(round2(validatedUnitPrice * 12));
+        }
+        if (liter20_price !== undefined) {
+            updates.push('liter20_price = ?'); params.push(parseNonNegativeNumber(liter20_price, '20L price'));
+        }
+        if (low_stock_threshold !== undefined) {
+            updates.push('low_stock_threshold = ?'); params.push(parseNonNegativeInteger(low_stock_threshold, 'Low stock threshold'));
+        }
+
         updates.push('updated_at = CURRENT_TIMESTAMP');
         params.push(req.params.id);
         if (updates.length === 1) return res.status(400).json({ error: 'No fields to update' });
@@ -207,6 +225,11 @@ router.post('/:id/stock-movement', requirePermission('manage_products'), (req, r
         if (!['carton', 'liter20'].includes(unit_type)) return res.status(400).json({ error: 'Invalid unit type' });
         const qty = parsePositiveInteger(quantity, 'Quantity');
 
+        const product = db.prepare('SELECT id FROM products WHERE id = ? AND is_active = 1').get(productId);
+        if (!product) return res.status(400).json({ error: 'Product not found or archived' });
+        const warehouse = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(warehouse_id);
+        if (!warehouse) return res.status(400).json({ error: 'Warehouse not found or inactive' });
+
         const stockField = stockColumn(unit_type);
         const row = db.prepare(`SELECT ${stockField} as current_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?`).get(productId, warehouse_id);
         if (!row) return res.status(404).json({ error: 'Product stock not found for this warehouse' });
@@ -242,7 +265,7 @@ router.get('/:id/movements', (req, res) => {
         const params = [req.params.id];
         if (warehouse_id) { query += ' AND sm.warehouse_id = ?'; params.push(warehouse_id); }
         query += ' ORDER BY sm.created_at DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(parseLimit(limit, 50), parseOffset(offset));
         res.json(db.prepare(query).all(...params));
     } catch (err) {
         sendSafeError(res, err, '[products]');
