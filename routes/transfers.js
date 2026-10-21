@@ -1,8 +1,9 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken, requireAdmin } = require('../auth');
+const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
+const { checkLowStock } = require('../services/low-stock');
 const { stockColumn } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 
@@ -30,7 +31,7 @@ router.get('/', (req, res) => {
     }
 });
 
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requirePermission('manage_transfers'), (req, res) => {
     try {
         const { product_id, from_warehouse_id, to_warehouse_id, unit_type, quantity, notes } = req.body;
         if (!product_id || !from_warehouse_id || !to_warehouse_id || !unit_type || !quantity) {
@@ -61,6 +62,8 @@ router.post('/', requireAdmin, (req, res) => {
             mv.run(uuidv4(), product_id, to_warehouse_id, 'transfer_in', unit_type, quantity, transferId, notes || null, req.user.id);
         });
         transaction();
+
+        checkLowStock(product_id, from_warehouse_id, unit_type, source.stock - quantity, source.stock);
 
         logAudit(req.user.id, 'stock.transfer', 'product', product_id, { from_warehouse_id, to_warehouse_id, unit_type, quantity });
         res.status(201).json({ id: transferId, message: 'Stock transferred successfully' });

@@ -1,9 +1,9 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken, requireAdmin } = require('../auth');
+const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
-const { notifyLowStock } = require('../services/notifications');
+const { checkLowStock } = require('../services/low-stock');
 const { stockColumn } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 
@@ -102,7 +102,7 @@ router.get('/:id', (req, res) => {
     }
 });
 
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requirePermission('manage_products'), (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold, warehouse_id, carton_stock, liter20_stock } = req.body;
 
@@ -147,7 +147,7 @@ router.post('/', requireAdmin, (req, res) => {
     }
 });
 
-router.put('/:id', requireAdmin, (req, res) => {
+router.put('/:id', requirePermission('manage_products'), (req, res) => {
     try {
         const { name, description, sku, unit_price, carton_price, liter20_price, low_stock_threshold } = req.body;
         const hasCarton = carton_price !== undefined && carton_price !== null && carton_price !== '';
@@ -179,7 +179,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/:id', requireAdmin, (req, res) => {
+router.delete('/:id', requirePermission('manage_products'), (req, res) => {
     try {
         const productId = req.params.id;
         const product = db.prepare('SELECT id, name, is_active FROM products WHERE id = ?').get(productId);
@@ -197,7 +197,7 @@ router.delete('/:id', requireAdmin, (req, res) => {
     }
 });
 
-router.post('/:id/stock-movement', requireAdmin, (req, res) => {
+router.post('/:id/stock-movement', requirePermission('manage_products'), (req, res) => {
     try {
         const { movement_type, unit_type, quantity, warehouse_id, reference_id, reference_type, notes } = req.body;
         const productId = req.params.id;
@@ -225,24 +225,13 @@ router.post('/:id/stock-movement', requireAdmin, (req, res) => {
         });
         transaction();
 
-        checkLowStock(productId, warehouse_id, unit_type, newStock);
+        checkLowStock(productId, warehouse_id, unit_type, newStock, currentStock);
         logAudit(req.user.id, 'stock.adjust', 'product', productId, { movement_type, unit_type, quantity, warehouse_id });
         res.json({ message: 'Stock movement recorded', new_stock: newStock });
     } catch (err) {
         sendSafeError(res, err, '[products]');
     }
 });
-
-function checkLowStock(productId, warehouseId, unitType, newStock) {
-    const row = db.prepare('SELECT low_stock_threshold, name FROM products WHERE id = ?').get(productId);
-    if (!row) return;
-    if (newStock <= row.low_stock_threshold) {
-        db.prepare(`INSERT INTO alerts (id, type, product_id, warehouse_id, message, severity) VALUES (?, ?, ?, ?, ?, ?)`)
-            .run(uuidv4(), 'low_stock', productId, warehouseId, `Low stock alert: ${row.name} (${unitType}) has ${newStock} remaining (threshold: ${row.low_stock_threshold})`, 'warning');
-        const wh = db.prepare('SELECT name FROM warehouses WHERE id = ?').get(warehouseId);
-        notifyLowStock({ productName: row.name, warehouseName: wh?.name || 'Warehouse', unitType, current: newStock, threshold: row.low_stock_threshold });
-    }
-}
 
 router.get('/:id/movements', (req, res) => {
     try {
@@ -289,6 +278,7 @@ router.get('/stock/export', (req, res) => {
             const ExcelJS = require('exceljs');
             const workbook = new ExcelJS.Workbook();
             const used = new Set();
+            const isAdmin = req.user && req.user.role === 'admin';
 
             for (const wh of warehouses) {
                 const rows = db.prepare(stockQuery).all(wh.id);
@@ -300,23 +290,27 @@ router.get('/stock/export', (req, res) => {
                 used.add(candidate);
 
                 const ws = workbook.addWorksheet(candidate);
-                ws.columns = [
+                const columns = [
                     { header: 'Product', key: 'name', width: 30 },
                     { header: 'SKU', key: 'sku', width: 15 },
                     { header: 'Carton Price (₵)', key: 'carton_price', width: 18 },
                     { header: '20L Price (₵)', key: 'liter20_price', width: 16 },
                     { header: 'Carton Stock', key: 'carton_stock', width: 14 },
                     { header: '20L Stock', key: 'liter20_stock', width: 12 },
-                    { header: 'Reorder Level', key: 'threshold', width: 14 },
-                    { header: 'Total Value (₵)', key: 'total_value', width: 18 }
+                    { header: 'Reorder Level', key: 'threshold', width: 14 }
                 ];
+                if (isAdmin) columns.push({ header: 'Total Value (₵)', key: 'total_value', width: 18 });
+                ws.columns = columns;
+
                 rows.forEach(r => {
-                    const total = (r.carton_price * r.carton_stock) + (r.liter20_price * r.liter20_stock);
-                    ws.addRow({ name: r.name, sku: r.sku || '', carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold, total_value: total });
+                    const row = { name: r.name, sku: r.sku || '', carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold };
+                    if (isAdmin) row.total_value = (r.carton_price * r.carton_stock) + (r.liter20_price * r.liter20_stock);
+                    ws.addRow(row);
                 });
                 ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
                 ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
-                ['carton_price', 'liter20_price', 'total_value'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+                ['carton_price', 'liter20_price'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+                if (isAdmin) ws.getColumn('total_value').numFmt = '₵#,##0.00';
             }
 
             const filename = `VEEMENZ-Stock-${new Date().toISOString().split('T')[0]}.xlsx`;

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
+const { checkLowStock } = require('../services/low-stock');
 const { stockColumn, priceColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 
@@ -21,8 +22,11 @@ const ALLOWED_STATUS_TRANSITIONS = {
 };
 
 function getTaxRate() {
+    const enabled = db.prepare("SELECT value FROM settings WHERE key = 'tax_enabled'").get();
+    if (enabled && enabled.value === 'false') return 0;
     const row = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get();
-    return parseFloat(row?.value) || 0.10;
+    const parsed = parseFloat(row?.value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function restockSale(saleId, warehouseId, userId, referenceType) {
@@ -205,7 +209,7 @@ router.post('/', (req, res) => {
             const lineDiscount = item.discount || 0;
             const lineTotal = Math.max(0, gross - lineDiscount);
             subtotal += lineTotal;
-            validatedItems.push({ ...item, quantity, unit_price: unitPrice, discount: lineDiscount, line_total: lineTotal });
+            validatedItems.push({ ...item, quantity, unit_price: unitPrice, discount: lineDiscount, line_total: lineTotal, oldStock: row.stock });
         }
 
         const taxRate = getTaxRate();
@@ -231,19 +235,13 @@ router.post('/', (req, res) => {
                 if (deducted.changes === 0) throw new ClientError(400, 'Insufficient stock');
                 db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by) VALUES (?, ?, ?, 'out', ?, ?, ?, 'sale', ?)`)
                     .run(uuidv4(), item.product_id, warehouse_id, item.unit_type, item.quantity, saleId, req.user.id);
-
-                const productRow = db.prepare(
-                    `SELECT ps.${stockField} as stock, p.low_stock_threshold, p.name
-                     FROM products p JOIN product_stock ps ON p.id = ps.product_id
-                     WHERE p.id = ? AND ps.warehouse_id = ?`
-                ).get(item.product_id, warehouse_id);
-                if (productRow && productRow.stock <= productRow.low_stock_threshold) {
-                    db.prepare(`INSERT INTO alerts (id, type, product_id, warehouse_id, message, severity) VALUES (?, ?, ?, ?, ?, ?)`)
-                        .run(uuidv4(), 'low_stock', item.product_id, warehouse_id, `Low stock alert: ${productRow.name} (${item.unit_type}) has ${productRow.stock} remaining`, 'warning');
-                }
             }
         });
         transaction();
+
+        for (const item of validatedItems) {
+            checkLowStock(item.product_id, warehouse_id, item.unit_type, item.oldStock - item.quantity, item.oldStock);
+        }
 
         logAudit(req.user.id, 'sale.create', 'sale', saleId, { total, payment_method: method });
         res.status(201).json({ id: saleId, total, message: 'Sale completed successfully' });
@@ -278,10 +276,19 @@ function applyStatusChange(saleId, nextStatus, userId) {
     return sale;
 }
 
-router.put('/:id/payment-status', requireAdmin, (req, res) => {
+router.put('/:id/payment-status', authenticateToken, (req, res) => {
     try {
         const { payment_status } = req.body;
         if (!PAYMENT_STATUSES.includes(payment_status)) return res.status(400).json({ error: 'Invalid payment status' });
+
+        const sale = db.prepare('SELECT id, payment_status FROM sales WHERE id = ?').get(req.params.id);
+        if (!sale) return res.status(404).json({ error: 'Sale not found' });
+
+        const isMarkPaid = sale.payment_status === 'pending' && payment_status === 'completed';
+        if (!isMarkPaid && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+
         applyStatusChange(req.params.id, payment_status, req.user.id);
         logAudit(req.user.id, 'sale.status', 'sale', req.params.id, { payment_status });
         res.json({ message: 'Payment status updated' });

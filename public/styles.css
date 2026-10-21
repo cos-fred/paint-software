@@ -1631,3 +1631,6 @@ td .action-btn { margin: 2px; }
     background: var(--secondary-hover);
     color: #fff;
 }
+
+/* Hide total inventory value column for non-admins / when toggled off */
+body.hide-total-value .total-value-col { display: none; }

@@ -7,6 +7,9 @@ let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let warehousesCache = [];
 let taxRate = 0.10;
+let taxEnabled = true;
+let showTotalValue = true;
+let forcePasswordChange = false;
 let confirmCallback = null;
 let saleWarehouseChangeHandler = null;
 
@@ -97,11 +100,51 @@ async function fetchWithAuth(url, options = {}) {
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const res = await fetch(url, { ...options, headers });
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
         logout();
         throw new Error('Session expired. Please log in again.');
     }
     return res;
+}
+
+function canSeeTotalValue() {
+    return currentUser?.role === 'admin' && showTotalValue !== false;
+}
+
+function applyTotalValueVisibility() {
+    document.body.classList.toggle('hide-total-value', !canSeeTotalValue());
+}
+
+const ACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+let activityTimer = null;
+
+function resetActivityTimer() {
+    if (!authToken) return;
+    clearTimeout(activityTimer);
+    activityTimer = setTimeout(() => {
+        showToast('Logged out due to inactivity', 'warning');
+        logout();
+    }, ACTIVITY_TIMEOUT_MS);
+}
+
+function clearActivityTimer() {
+    clearTimeout(activityTimer);
+    activityTimer = null;
+}
+
+function initActivityTimeout() {
+    ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(evt => {
+        document.addEventListener(evt, resetActivityTimer, { passive: true });
+    });
+}
+
+function enforcePasswordChange() {
+    forcePasswordChange = true;
+    const title = document.getElementById('password-modal-title');
+    if (title) title.textContent = 'You must change your password';
+    document.querySelectorAll('#password-modal .modal-close').forEach(b => b.style.display = 'none');
+    document.getElementById('password-form')?.reset();
+    showModal('password-modal');
 }
 
 // ===================================================
@@ -135,6 +178,7 @@ async function loadUser() {
             const auditNav = document.getElementById('audit-nav');
             if (auditNav) auditNav.style.display = '';
         }
+        applyTotalValueVisibility();
         return user;
     } catch (err) {
         return null;
@@ -146,17 +190,25 @@ function logout() {
     currentUser = null;
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
+    disconnectRealtime();
+    clearActivityTimer();
     showLoginScreen();
 }
 
 async function init() {
+    initActivityTimeout();
     if (authToken) {
         const user = await loadUser();
         if (user) {
             showMainScreen();
             await loadWarehouses();
             await loadSettings();
-            switchSection('dashboard');
+            resetActivityTimer();
+            if (user.must_change_password) {
+                enforcePasswordChange();
+            } else {
+                switchSection('dashboard');
+            }
         } else {
             logout();
         }
@@ -195,10 +247,16 @@ function setupEventListeners() {
                 localStorage.setItem('authToken', authToken);
                 localStorage.setItem('currentUser', JSON.stringify(currentUser));
                 showMainScreen();
+                initRealtime();
                 await loadUser();
                 await loadWarehouses();
                 await loadSettings();
-                switchSection('dashboard');
+                resetActivityTimer();
+                if (currentUser?.must_change_password) {
+                    enforcePasswordChange();
+                } else {
+                    switchSection('dashboard');
+                }
             } catch (err) {
                 showToast(err.message, 'error');
             } finally {
@@ -248,10 +306,10 @@ function setupEventListeners() {
 
     // Close modals
     document.querySelectorAll('.modal-close').forEach(btn => {
-        btn.addEventListener('click', () => closeModal());
+        btn.addEventListener('click', () => { if (!forcePasswordChange) closeModal(); });
     });
     document.querySelectorAll('.modal').forEach(modal => {
-        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(modal.id); });
+        modal.addEventListener('click', (e) => { if (e.target === modal && !forcePasswordChange) closeModal(modal.id); });
     });
 
     // Confirm modal OK button
@@ -272,6 +330,7 @@ function setupEventListeners() {
     // Sales
     document.getElementById('new-sale-btn')?.addEventListener('click', openSaleModal);
     document.getElementById('sale-form')?.addEventListener('submit', handleSaleSubmit);
+    document.getElementById('status-form')?.addEventListener('submit', handleStatusSubmit);
     document.getElementById('add-sale-item')?.addEventListener('click', addSaleItemRow);
     document.getElementById('sale-discount')?.addEventListener('input', updateSaleSummary);
     document.getElementById('sale-search')?.addEventListener('input', debounce(loadSales, 400));
@@ -364,6 +423,10 @@ function handleResize() {
 // ===================================================
 
 function switchSection(section) {
+    if (forcePasswordChange && section !== 'profile') {
+        enforcePasswordChange();
+        return;
+    }
     document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
@@ -433,15 +496,17 @@ async function loadDashboard() {
         const inventory = await inventoryRes.json();
         const alertsData = await alertsRes.json();
 
+        const showValue = canSeeTotalValue();
         document.getElementById('dashboard-stats').innerHTML = `
             <div class="stat-card primary">
                 <div class="stat-icon">📦</div>
                 <div class="stat-info"><h4>Total Products</h4><div class="stat-value">${inventory.summary?.total_products ?? 0}</div></div>
             </div>
+            ${showValue ? `
             <div class="stat-card success">
                 <div class="stat-icon">💰</div>
                 <div class="stat-info"><h4>Inventory Value</h4><div class="stat-value">${formatCurrency(inventory.summary?.total_inventory_value ?? 0)}</div></div>
-            </div>
+            </div>` : ''}
             <div class="stat-card warning">
                 <div class="stat-icon">📊</div>
                 <div class="stat-info"><h4>Cartons + 20L (total)</h4><div class="stat-value">${inventory.summary?.total_stock_items ?? 0}</div></div>
@@ -542,7 +607,7 @@ async function loadStock() {
                 <td class="${cls(cartonStock)}">${cartonStock}</td>
                 <td class="${cls(liter20Stock)}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
-                <td><strong>${formatCurrency(totalValue)}</strong></td>
+                <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
                 <td><span class="status-badge ${isLow ? 'status-pending' : 'status-completed'}">${isLow ? 'Low Stock' : 'OK'}</span></td>
                 <td><button class="action-btn edit" onclick="openStockAdjustModal('${p.id}','${escapeHtml(p.name)}')">⚙️ Adjust</button></td>
             </tr>`;
@@ -654,7 +719,7 @@ async function loadProducts() {
                 <td class="${cartonStock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${cartonStock}</td>
                 <td class="${liter20Stock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
-                <td><strong>${formatCurrency(totalValue)}</strong></td>
+                <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
                 <td>
                     <button class="action-btn edit" onclick="editProduct('${p.id}')">✏️ Edit</button>
                     <button class="action-btn delete" onclick="confirmDeleteProduct('${p.id}','${escapeHtml(p.name)}')">🗑️ Delete</button>
@@ -913,6 +978,7 @@ async function loadSales() {
         const res = await fetchWithAuth(`${API_BASE}/sales?${params}`);
         const sales = await res.json();
         const tbody = document.querySelector('#sales-table tbody');
+        const isAdmin = currentUser?.role === 'admin';
 
         if (!sales.length) {
             tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Sales</h4><p>Click "New Sale" to record your first sale</p></td></tr>';
@@ -933,8 +999,11 @@ async function loadSales() {
                 <td>
                     <button class="action-btn view" onclick="viewReceipt('${s.id}')">👁️ View</button>
                     <button class="action-btn view" onclick="openReturnModal('${s.id}')">↩️ Return</button>
-                    <button class="action-btn edit" onclick="editSaleStatus('${s.id}','${s.payment_status}')">✏️ Status</button>
-                    <button class="action-btn delete" onclick="confirmDeleteSale('${s.id}')">🗑️ Delete</button>
+                    ${s.payment_status === 'pending' ? `<button class="action-btn edit" onclick="markSalePaid('${s.id}')">💵 Mark Paid</button>` : ''}
+                    ${isAdmin ? `
+                        <button class="action-btn edit" onclick="editSaleStatus('${s.id}','${s.payment_status}')">✏️ Status</button>
+                        <button class="action-btn delete" onclick="confirmDeleteSale('${s.id}')">🗑️ Delete</button>
+                    ` : ''}
                 </td>
             </tr>`).join('');
     } catch (err) {
@@ -1017,7 +1086,7 @@ function updateSaleSummary() {
         row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal);
         subtotal += lineTotal;
     });
-    const tax = subtotal * taxRate;
+    const tax = taxEnabled ? subtotal * taxRate : 0;
     const discount = parseFloat(document.getElementById('sale-discount')?.value) || 0;
     const discountType = document.getElementById('sale-discount-type')?.value || 'amount';
     const discountAmount = discountType === 'percent' ? subtotal * (discount / 100) : discount;
@@ -1048,6 +1117,7 @@ async function handleSaleSubmit(e) {
         customer_id: document.getElementById('sale-customer').value || null,
         warehouse_id: warehouseId, items,
         payment_method: document.getElementById('sale-payment-method').value,
+        payment_status: document.getElementById('sale-payment-status')?.value || 'completed',
         discount: parseFloat(document.getElementById('sale-discount').value) || 0,
         discount_type: document.getElementById('sale-discount-type')?.value || 'amount',
         notes: document.getElementById('sale-notes').value.trim()
@@ -1125,16 +1195,35 @@ function printReceipt() {
 }
 
 function editSaleStatus(id, currentStatus) {
-    const statuses = ['pending', 'completed', 'cancelled', 'refunded'];
-    const newStatus = prompt(`Change status (current: ${currentStatus})\nOptions: ${statuses.join(', ')}`, currentStatus);
-    if (!newStatus || !statuses.includes(newStatus.toLowerCase())) return;
-    fetchWithAuth(`${API_BASE}/sales/${id}/payment-status`, {
-        method: 'PUT', body: JSON.stringify({ payment_status: newStatus.toLowerCase() })
-    }).then(r => r.json()).then(result => {
-        if (result.error) throw new Error(result.error);
+    document.getElementById('status-sale-id').value = id;
+    document.getElementById('status-select').value = currentStatus;
+    showModal('status-modal');
+}
+
+async function handleStatusSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('status-sale-id').value;
+    const newStatus = document.getElementById('status-select').value;
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/sales/${id}/payment-status`, { method: 'PUT', body: JSON.stringify({ payment_status: newStatus }) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error);
         showToast('Status updated', 'success');
-        loadSales();
-    }).catch(err => showToast(err.message, 'error'));
+        closeModal('status-modal');
+        loadSales(); loadDashboard();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+function markSalePaid(id) {
+    showConfirm('Mark this sale as paid?', async () => {
+        try {
+            const res = await fetchWithAuth(`${API_BASE}/sales/${id}/payment-status`, { method: 'PUT', body: JSON.stringify({ payment_status: 'completed' }) });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error);
+            showToast('Sale marked as paid', 'success');
+            loadSales(); loadDashboard();
+        } catch (err) { showToast(err.message, 'error'); }
+    });
 }
 
 function confirmDeleteSale(id) {
@@ -1301,7 +1390,12 @@ async function loadSettings() {
             if (el) el.value = s.value;
         });
         const tr = settings.find(s => s.key === 'tax_rate');
-        if (tr) taxRate = parseFloat(tr.value) || 0.10;
+        if (tr) taxRate = Number.isFinite(parseFloat(tr.value)) ? parseFloat(tr.value) : 0;
+        const te = settings.find(s => s.key === 'tax_enabled');
+        if (te) taxEnabled = te.value !== 'false';
+        const sv = settings.find(s => s.key === 'show_total_value');
+        if (sv) showTotalValue = sv.value !== 'false';
+        applyTotalValueVisibility();
     } catch (err) { console.error('Settings error:', err); }
 }
 
@@ -1319,13 +1413,16 @@ async function handleCompanySettings(e) {
 
 async function handleSystemSettings(e) {
     e.preventDefault();
-    const fields = ['tax_rate', 'currency', 'low_stock_threshold_default', 'notifications_enabled', 'notifications_webhook_url'];
+    const fields = ['tax_rate', 'tax_enabled', 'show_total_value', 'currency', 'low_stock_threshold_default', 'notifications_enabled', 'notifications_webhook_url'];
     try {
         for (const key of fields) {
             const el = document.getElementById(`setting-${key}`);
             if (el) await fetchWithAuth(`${API_BASE}/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value: el.value }) });
         }
-        taxRate = parseFloat(document.getElementById('setting-tax_rate')?.value) || 0.10;
+        taxRate = Number.isFinite(parseFloat(document.getElementById('setting-tax_rate')?.value)) ? parseFloat(document.getElementById('setting-tax_rate')?.value) : 0;
+        taxEnabled = document.getElementById('setting-tax_enabled')?.value !== 'false';
+        showTotalValue = document.getElementById('setting-show_total_value')?.value !== 'false';
+        applyTotalValueVisibility();
         showToast('System settings saved', 'success');
     } catch (err) { showToast(err.message, 'error'); }
 }
@@ -1347,7 +1444,11 @@ async function loadUsers() {
                 <td><span class="status-badge ${u.role === 'admin' ? 'status-completed' : 'status-ordered'}">${u.role}</span></td>
                 <td>${new Date(u.created_at).toLocaleDateString()}</td>
                 <td>
-                    ${u.id !== currentUser?.id ? `<button class="action-btn delete" onclick="confirmDeleteUser('${u.id}','${escapeHtml(u.username)}')">🗑️ Delete</button>` : '<span style="color:var(--text-muted)">You</span>'}
+                    ${u.id !== currentUser?.id ? `
+                        <button class="action-btn edit" onclick="editUser('${u.id}')">✏️ Edit</button>
+                        <button class="action-btn view" onclick="confirmRevokeSessions('${u.id}','${escapeHtml(u.username)}')">🔒 Sign Out</button>
+                        <button class="action-btn delete" onclick="confirmDeleteUser('${u.id}','${escapeHtml(u.username)}')">🗑️ Delete</button>
+                    ` : '<span style="color:var(--text-muted)">You</span>'}
                 </td>
             </tr>`).join('');
     } catch (err) { console.error('Users error:', err); }
@@ -1357,25 +1458,77 @@ function openUserModal() {
     document.getElementById('user-form').reset();
     document.getElementById('user-id').value = '';
     document.getElementById('user-modal-title').textContent = 'Add User';
+    document.getElementById('user-password').required = true;
+    setPermissionCheckboxes([]);
     showModal('user-modal');
+}
+
+function setPermissionCheckboxes(perms) {
+    document.querySelectorAll('#user-form input[data-perm]').forEach(cb => {
+        cb.checked = (perms || []).includes(cb.dataset.perm);
+    });
+}
+
+function collectPermissions() {
+    const perms = [];
+    document.querySelectorAll('#user-form input[data-perm]:checked').forEach(cb => perms.push(cb.dataset.perm));
+    return perms;
+}
+
+async function editUser(id) {
+    try {
+        const res = await fetchWithAuth(`${API_BASE}/auth/users/${id}`);
+        const u = await res.json();
+        document.getElementById('user-form').reset();
+        document.getElementById('user-id').value = u.id;
+        document.getElementById('user-modal-title').textContent = 'Edit User';
+        document.getElementById('user-username').value = u.username;
+        document.getElementById('user-email').value = u.email;
+        document.getElementById('user-role').value = u.role;
+        document.getElementById('user-password').required = false;
+        document.getElementById('user-password').placeholder = 'Leave blank to keep current';
+        setPermissionCheckboxes(u.permissions || []);
+        showModal('user-modal');
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function handleUserSubmit(e) {
     e.preventDefault();
+    const id = document.getElementById('user-id').value;
+    const password = document.getElementById('user-password').value;
     const data = {
         username: document.getElementById('user-username').value.trim(),
         email: document.getElementById('user-email').value.trim(),
-        password: document.getElementById('user-password').value,
-        role: document.getElementById('user-role').value
+        role: document.getElementById('user-role').value,
+        permissions: collectPermissions()
     };
+    if (!id) {
+        if (!password) { showToast('Password is required', 'error'); return; }
+        data.password = password;
+    } else if (password) {
+        data.password = password;
+    }
     try {
-        const res = await fetchWithAuth(`${API_BASE}/auth/register`, { method: 'POST', body: JSON.stringify(data) });
+        const url = id ? `${API_BASE}/auth/users/${id}` : `${API_BASE}/auth/register`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await fetchWithAuth(url, { method, body: JSON.stringify(data) });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error);
-        showToast('User created', 'success');
+        showToast(id ? 'User updated' : 'User created', 'success');
         closeModal('user-modal');
         loadUsers();
     } catch (err) { showToast(err.message, 'error'); }
+}
+
+function confirmRevokeSessions(id, username) {
+    showConfirm(`Sign out "${username}" from all sessions?`, async () => {
+        try {
+            const res = await fetchWithAuth(`${API_BASE}/auth/users/${id}/revoke-sessions`, { method: 'POST' });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error);
+            showToast('Sessions revoked', 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+    });
 }
 
 function confirmDeleteUser(id, username) {
@@ -1485,9 +1638,11 @@ async function handlePasswordChange(e) {
         const res = await fetchWithAuth(`${API_BASE}/auth/change-password`, { method: 'PUT', body: JSON.stringify(data) });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error);
-        showToast('Password changed successfully', 'success');
+        forcePasswordChange = false;
         closeModal('password-modal');
         document.getElementById('password-form').reset();
+        showToast('Password changed. Please log in again.', 'success');
+        logout();
     } catch (err) { showToast(err.message, 'error'); }
 }
 
@@ -1660,10 +1815,14 @@ async function exportSales() {
 // REAL-TIME UPDATES (WebSockets)
 // ===================================================
 
+let realtimeSocket = null;
+
 function initRealtime() {
     if (typeof io === 'undefined') return;
-    const socket = io();
-    socket.on('data-changed', () => {
+    if (realtimeSocket) { realtimeSocket.disconnect(); realtimeSocket = null; }
+    if (!authToken) return;
+    realtimeSocket = io({ auth: { token: authToken } });
+    realtimeSocket.on('data-changed', () => {
         const active = document.querySelector('.nav-item.active')?.dataset.section || 'dashboard';
         loadDashboard();
         switch (active) {
@@ -1679,6 +1838,10 @@ function initRealtime() {
             case 'alerts': loadAlerts(); break;
         }
     });
+}
+
+function disconnectRealtime() {
+    if (realtimeSocket) { realtimeSocket.disconnect(); realtimeSocket = null; }
 }
 
 // ===================================================

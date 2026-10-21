@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
-const { authenticateToken, requireAdmin } = require('../auth');
+const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { stockColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
 });
 
 // Partial/full return of sale items — restores stock
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requirePermission('manage_returns'), (req, res) => {
     try {
         const { sale_id, items, reason } = req.body;
         if (!sale_id || !items || items.length === 0) return res.status(400).json({ error: 'Sale and at least one item are required' });

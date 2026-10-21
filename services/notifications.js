@@ -23,11 +23,15 @@ async function notifyLowStock({ productName, warehouseName, unitType, current, t
 
     if (webhookUrl) {
         try {
-            await fetch(webhookUrl, {
+            const response = await fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text: message, product_name: productName, warehouse: warehouseName, unit_type: unitType, current, threshold })
             });
+            if (!response.ok) {
+                console.error('[NOTIFY] webhook returned', response.status);
+                return false;
+            }
             return true;
         } catch (err) {
             console.error('[NOTIFY] webhook failed:', err.message);

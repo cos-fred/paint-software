@@ -21,6 +21,12 @@ function migrateSchema() {
     if (!userCols.includes('token_version')) {
         db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
     }
+    if (!userCols.includes('permissions')) {
+        db.exec("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'");
+    }
+    if (!userCols.includes('must_change_password')) {
+        db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+    }
 }
 
 function initializeDatabase() {
@@ -35,6 +41,8 @@ function initializeDatabase() {
             role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
             is_active INTEGER NOT NULL DEFAULT 1,
             token_version INTEGER NOT NULL DEFAULT 0,
+            permissions TEXT NOT NULL DEFAULT '[]',
+            must_change_password INTEGER NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -262,7 +270,9 @@ function insertDefaultSettings() {
         { key: 'company_address', value: '123 Industrial Ave, Accra, Ghana', description: 'Company address for receipts' },
         { key: 'company_phone', value: '+233-XX-XXX-XXXX', description: 'Company phone for receipts' },
         { key: 'company_email', value: 'info@veemenz.com', description: 'Company email for receipts' },
-        { key: 'tax_rate', value: '0.10', description: 'Default tax rate (10%)' },
+        { key: 'tax_rate', value: '0.10', description: 'Tax rate applied to sales (0.10 = 10%)' },
+        { key: 'tax_enabled', value: 'true', description: 'Whether tax is applied to sales' },
+        { key: 'show_total_value', value: 'true', description: 'Show total inventory value (admin only)' },
         { key: 'currency', value: 'GHS', description: 'Currency code' },
         { key: 'low_stock_threshold_default', value: '10', description: 'Default low stock threshold' },
         { key: 'notifications_enabled', value: 'false', description: 'Enable low-stock notifications' },

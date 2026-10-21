@@ -33,8 +33,19 @@ function bumpTokenVersion(userId) {
 
 function loadCurrentUser(userId) {
     return getDb().prepare(
-        'SELECT id, username, email, role, is_active, token_version FROM users WHERE id = ?'
+        'SELECT id, username, email, role, is_active, token_version, permissions FROM users WHERE id = ?'
     ).get(userId);
+}
+
+function parsePermissions(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
 }
 
 // Always re-load role, active flag, and token_version from the database.
@@ -72,7 +83,8 @@ function authenticateToken(req, res, next) {
         username: current.username,
         email: current.email,
         role: current.role,
-        token_version: current.token_version || 0
+        token_version: current.token_version || 0,
+        permissions: parsePermissions(current.permissions)
     };
     next();
 }
@@ -84,15 +96,31 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+function requirePermission(perm) {
+    return (req, res, next) => {
+        if (!req.user) return res.status(401).json({ error: 'Access token required' });
+        if (req.user.role === 'admin') return next();
+        if ((req.user.permissions || []).includes(perm)) return next();
+        return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    };
+}
+
 const VALID_ROLES = ['admin', 'user'];
+
+const PERMISSIONS = ['manage_products', 'manage_transfers', 'manage_returns'];
+const DEFAULT_USER_PERMISSIONS = ['manage_returns'];
 
 module.exports = {
     generateToken,
     verifyToken,
     authenticateToken,
     requireAdmin,
+    requirePermission,
     bumpTokenVersion,
+    parsePermissions,
     VALID_ROLES,
+    PERMISSIONS,
+    DEFAULT_USER_PERMISSIONS,
     isWeakSecret,
     loadJwtSecret
 };

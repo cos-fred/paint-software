@@ -175,7 +175,7 @@
                                         <th>Cartons</th>
                                         <th>20L Stock</th>
                                         <th>Threshold</th>
-                                        <th>Total Value</th>
+                                        <th class="total-value-col">Total Value</th>
                                         <th>Status</th>
                                         <th>Actions</th>
                                     </tr>
@@ -229,7 +229,7 @@
                                         <th>Total Cartons</th>
                                         <th>Total 20L</th>
                                         <th>Threshold</th>
-                                        <th>Total Value</th>
+                                        <th class="total-value-col">Total Value</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -504,6 +504,20 @@
                                         <div class="form-group">
                                             <label>Tax Rate (%)</label>
                                             <input type="number" id="setting-tax_rate" name="tax_rate" step="0.01" min="0" max="100">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Tax</label>
+                                            <select id="setting-tax_enabled" name="tax_enabled">
+                                                <option value="true">Enabled</option>
+                                                <option value="false">Disabled</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Total Value</label>
+                                            <select id="setting-show_total_value" name="show_total_value">
+                                                <option value="true">Show</option>
+                                                <option value="false">Hide</option>
+                                            </select>
                                         </div>
                                         <div class="form-group">
                                             <label>Currency</label>
@@ -804,6 +818,13 @@
                             <option value="momo">Mobile Money</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label>Payment Status</label>
+                        <select id="sale-payment-status">
+                            <option value="completed">Paid</option>
+                            <option value="pending">Unpaid (Credit)</option>
+                        </select>
+                    </div>
                 </div>
                     <div class="form-group">
                         <label>Items</label>
@@ -957,7 +978,7 @@
     <div id="password-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Change Password</h3>
+                <h3 id="password-modal-title">Change Password</h3>
                 <button class="modal-close" aria-label="Close">&times;</button>
             </div>
             <form id="password-form">
@@ -1002,7 +1023,7 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label>Password *</label>
-                        <input type="password" id="user-password" required minlength="6" placeholder="Password (min 6 chars)">
+                        <input type="password" id="user-password" minlength="6" placeholder="Password (min 6 chars)">
                     </div>
                     <div class="form-group">
                         <label>Role</label>
@@ -1011,6 +1032,12 @@
                             <option value="admin">Admin</option>
                         </select>
                     </div>
+                </div>
+                <div class="form-group">
+                    <label>Permissions <small>(non-admin only)</small></label>
+                    <label style="display:block; margin:4px 0;"><input type="checkbox" data-perm="manage_products"> Manage Products & Stock</label>
+                    <label style="display:block; margin:4px 0;"><input type="checkbox" data-perm="manage_transfers"> Manage Transfers</label>
+                    <label style="display:block; margin:4px 0;"><input type="checkbox" data-perm="manage_returns"> Process Returns</label>
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>
@@ -1051,6 +1078,31 @@
                 <div class="form-group">
                     <label>Address</label>
                     <input type="text" id="warehouse-address" placeholder="Street address">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="status-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Change Payment Status</h3>
+                <button class="modal-close" aria-label="Close">&times;</button>
+            </div>
+            <form id="status-form">
+                <input type="hidden" id="status-sale-id">
+                <div class="form-group">
+                    <label>Payment Status</label>
+                    <select id="status-select">
+                        <option value="pending">Pending</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="refunded">Refunded</option>
+                    </select>
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary modal-close">Cancel</button>
