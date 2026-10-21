@@ -32,7 +32,7 @@ describe('System reset', { concurrency: 1 }, () => {
     it('only the primary admin can reset; password is required and verified', async () => {
         const wh = (await request(server, { path: '/api/warehouses', token: adminToken })).body[0];
 
-        await request(server, { method: 'POST', path: '/api/products', token: adminToken, body: { name: 'Paint', unit_price: 10, warehouse_id: wh.id, carton_stock: 5 } });
+        await request(server, { method: 'POST', path: '/api/products', token: adminToken, body: { name: 'Paint', unit_price: 10, units_per_carton: 12, warehouse_id: wh.id, cartons: 5 } });
         await request(server, { method: 'POST', path: '/api/auth/register', token: adminToken, body: { username: 'admin2', email: 'a2@x.com', password: 'Admin2Pass12', role: 'admin' } });
         await request(server, { method: 'POST', path: '/api/auth/register', token: adminToken, body: { username: 'staff', email: 's@x.com', password: 'StaffPass123', role: 'user' } });
 

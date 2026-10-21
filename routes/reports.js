@@ -14,10 +14,10 @@ router.get('/inventory', (req, res) => {
         let query = `
             SELECT
                 p.id, p.name, p.sku,
-                p.carton_price, p.liter20_price, p.low_stock_threshold,
-                COALESCE(SUM(ps.carton_stock), 0) as carton_stock,
+                p.unit_price, p.carton_price, p.liter20_price, p.units_per_carton, p.low_stock_threshold,
+                COALESCE(SUM(ps.unit_stock), 0) as unit_stock,
                 COALESCE(SUM(ps.liter20_stock), 0) as liter20_stock,
-                COALESCE(SUM(p.carton_price * ps.carton_stock), 0) as carton_value,
+                COALESCE(SUM(p.unit_price * ps.unit_stock), 0) as unit_value,
                 COALESCE(SUM(p.liter20_price * ps.liter20_stock), 0) as liter20_value
             FROM products p
             LEFT JOIN product_stock ps ON p.id = ps.product_id
@@ -25,7 +25,7 @@ router.get('/inventory', (req, res) => {
         `;
         const params = [];
         if (warehouse_id) { query += ' AND ps.warehouse_id = ?'; params.push(warehouse_id); }
-        query += ' GROUP BY p.id, p.name, p.sku, p.carton_price, p.liter20_price, p.low_stock_threshold ORDER BY p.name';
+        query += ' GROUP BY p.id, p.name, p.sku, p.unit_price, p.carton_price, p.liter20_price, p.units_per_carton, p.low_stock_threshold ORDER BY p.name';
 
         const rows = db.prepare(query).all(...params);
 
@@ -42,17 +42,17 @@ router.get('/inventory', (req, res) => {
             }
         }
 
-        const totalValue = rows.reduce((sum, p) => sum + p.carton_value + p.liter20_value, 0);
-        const totalUnits = rows.reduce((sum, p) => sum + p.carton_stock + p.liter20_stock, 0);
+        const totalValue = rows.reduce((sum, p) => sum + p.unit_value + p.liter20_value, 0);
+        const totalUnits = rows.reduce((sum, p) => sum + p.unit_stock + p.liter20_stock, 0);
         const lowStockItems = rows.filter(p =>
-            p.carton_stock <= p.low_stock_threshold ||
+            p.unit_stock <= p.low_stock_threshold ||
             p.liter20_stock <= p.low_stock_threshold
         );
 
         // Enforce total-value visibility on the server, not just in the UI.
         if (!isAdmin) {
             for (const p of products) {
-                delete p.carton_value;
+                delete p.unit_value;
                 delete p.liter20_value;
             }
         }

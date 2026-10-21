@@ -170,9 +170,11 @@
                                     <tr>
                                         <th>Product</th>
                                         <th>Warehouse</th>
+                                        <th>Unit Price</th>
                                         <th>Carton Price</th>
                                         <th>20L Price</th>
                                         <th>Cartons</th>
+                                        <th>Loose Units</th>
                                         <th>20L Stock</th>
                                         <th>Threshold</th>
                                         <th class="total-value-col">Total Value</th>
@@ -226,8 +228,9 @@
                                         <th>Unit Price</th>
                                         <th>Carton Price</th>
                                         <th>20L Price</th>
-                                        <th>Total Cartons</th>
-                                        <th>Total 20L</th>
+                                        <th>Cartons</th>
+                                        <th>Loose Units</th>
+                                        <th>20L Stock</th>
                                         <th>Threshold</th>
                                         <th class="total-value-col">Total Value</th>
                                         <th>Actions</th>
@@ -625,14 +628,19 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label>Units per Carton *</label>
+                        <input type="number" id="product-units-per-carton" min="1" step="1" required placeholder="12">
+                        <small>Number of individual units in one carton</small>
+                    </div>
+                    <div class="form-group">
                         <label>Unit Price *</label>
                         <input type="number" id="product-unit-price" step="0.01" min="0" required placeholder="0.00">
-                        <small>Used to auto-calculate carton price (×12)</small>
+                        <small>Price of one individual unit</small>
                     </div>
                     <div class="form-group">
                         <label>Carton Price</label>
-                        <input type="number" id="product-carton-price" step="0.01" min="0" placeholder="Auto: 12 × unit">
-                        <small>Auto-calculated as 12 × unit price if left empty</small>
+                        <input type="number" id="product-carton-price" step="0.01" min="0" placeholder="Auto">
+                        <small>Auto-calculated as units-per-carton × unit price</small>
                     </div>
                     <div class="form-group">
                         <label>20L Container Price</label>
@@ -649,11 +657,15 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Initial Cartons</label>
+                            <label>Cartons</label>
                             <input type="number" id="product-carton-stock" min="0" value="0" placeholder="0">
                         </div>
                         <div class="form-group">
-                            <label>Initial 20L Stock</label>
+                            <label>Loose Units</label>
+                            <input type="number" id="product-loose-units" min="0" value="0" placeholder="0">
+                        </div>
+                        <div class="form-group">
+                            <label>20L Stock</label>
                             <input type="number" id="product-liter20-stock" min="0" value="0" placeholder="0">
                         </div>
                     </div>
@@ -696,6 +708,7 @@
                     <div class="form-group">
                         <label>Unit Type *</label>
                         <select id="stock-adjust-unit-type" required>
+                            <option value="unit">Unit</option>
                             <option value="carton">Carton</option>
                             <option value="liter20">20L Container</option>
                         </select>
@@ -839,6 +852,7 @@
                                     <option value="">Select Product</option>
                                 </select>
                                 <select class="sale-item-unit" required>
+                                    <option value="unit">Unit</option>
                                     <option value="carton">Carton</option>
                                     <option value="liter20">20L Container</option>
                                 </select>
@@ -921,6 +935,7 @@
                     <div class="form-group">
                         <label>Unit Type *</label>
                         <select id="transfer-unit-type" required>
+                            <option value="unit">Unit</option>
                             <option value="carton">Carton</option>
                             <option value="liter20">20L Container</option>
                         </select>

@@ -4,7 +4,7 @@ const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
-const { stockColumn, priceColumn, UNIT_TYPES } = require('../lib/stock');
+const { stockColumn, priceColumn, toUnits, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 const { parsePositiveInteger, parseFiniteNumber, parseLimit, parseOffset } = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
@@ -32,7 +32,11 @@ function getTaxRate() {
 }
 
 function restockSale(saleId, warehouseId, userId, referenceType) {
-    const items = db.prepare('SELECT product_id, unit_type, quantity FROM sale_items WHERE sale_id = ?').all(saleId);
+    const items = db.prepare(
+        `SELECT si.product_id, si.unit_type, si.quantity, p.units_per_carton
+         FROM sale_items si JOIN products p ON si.product_id = p.id
+         WHERE si.sale_id = ?`
+    ).all(saleId);
     for (const item of items) {
         const field = stockColumn(item.unit_type);
         const returned = db.prepare(
@@ -40,9 +44,10 @@ function restockSale(saleId, warehouseId, userId, referenceType) {
         ).get(saleId, item.product_id, item.unit_type).q;
         const qty = item.quantity - returned;
         if (qty <= 0) continue;
+        const unitsDelta = toUnits(item.unit_type, qty, item.units_per_carton);
         db.prepare(
             `UPDATE product_stock SET ${field} = ${field} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`
-        ).run(qty, item.product_id, warehouseId);
+        ).run(unitsDelta, item.product_id, warehouseId);
         db.prepare(
             `INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by)
              VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?)`
@@ -201,12 +206,15 @@ router.post('/', (req, res) => {
             const stockField = stockColumn(item.unit_type);
             const priceField = priceColumn(item.unit_type);
             const row = db.prepare(
-                `SELECT ps.${stockField} as stock, p.name, p.${priceField} as price
+                `SELECT ps.${stockField} as stock, p.name, p.${priceField} as price, p.units_per_carton
                  FROM product_stock ps JOIN products p ON ps.product_id = p.id
                  WHERE ps.product_id = ? AND ps.warehouse_id = ? AND p.is_active = 1`
             ).get(item.product_id, warehouse_id);
             if (!row) throw new ClientError(400, 'Product not found in warehouse');
-            if (row.stock < quantity) throw new ClientError(400, `Insufficient stock for ${row.name}`);
+
+            // Carton quantities are converted to total units for the stock check.
+            const unitsDelta = toUnits(item.unit_type, quantity, row.units_per_carton);
+            if (row.stock < unitsDelta) throw new ClientError(400, `Insufficient stock for ${row.name}`);
 
             // Server-authoritative pricing: always use the configured product price.
             const unitPrice = row.price;
@@ -225,6 +233,7 @@ router.post('/', (req, res) => {
                 unit_price: unitPrice,
                 discount: lineDiscount,
                 line_total: lineTotal,
+                unitsDelta,
                 oldStock: row.stock
             });
         }
@@ -252,7 +261,7 @@ router.post('/', (req, res) => {
                 const deducted = db.prepare(
                     `UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP
                      WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`
-                ).run(item.quantity, item.product_id, warehouse_id, item.quantity);
+                ).run(item.unitsDelta, item.product_id, warehouse_id, item.unitsDelta);
                 if (deducted.changes === 0) throw new ClientError(400, 'Insufficient stock');
                 db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, created_by) VALUES (?, ?, ?, 'out', ?, ?, ?, 'sale', ?)`)
                     .run(uuidv4(), item.product_id, warehouse_id, item.unit_type, item.quantity, saleId, req.user.id);
@@ -261,7 +270,7 @@ router.post('/', (req, res) => {
         transaction();
 
         for (const item of validatedItems) {
-            checkLowStock(item.product_id, warehouse_id, item.unit_type, item.oldStock - item.quantity, item.oldStock);
+            checkLowStock(item.product_id, warehouse_id, item.unit_type, item.oldStock - item.unitsDelta, item.oldStock);
         }
 
         logAudit(req.user.id, 'sale.create', 'sale', saleId, { total, payment_method: method });

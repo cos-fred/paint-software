@@ -27,6 +27,115 @@ function migrateSchema() {
     if (!userCols.includes('must_change_password')) {
         db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
     }
+
+    const productCols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name);
+    if (!productCols.includes('units_per_carton')) {
+        db.exec('ALTER TABLE products ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0');
+    }
+
+    const stockCols = db.prepare('PRAGMA table_info(product_stock)').all().map((c) => c.name);
+    if (!stockCols.includes('unit_stock')) {
+        db.exec('ALTER TABLE product_stock ADD COLUMN unit_stock INTEGER NOT NULL DEFAULT 0');
+    }
+}
+
+// Existing databases store only 'carton'/'liter20' unit types; the single-pool
+// model introduces 'unit'. Recreate the unit_type CHECK constraints so 'unit'
+// is accepted, preserving all existing rows and foreign keys.
+function migrateUnitTypeCheck() {
+    const tables = [
+        { name: 'sale_items', sql: `CREATE TABLE sale_items (
+            id TEXT PRIMARY KEY,
+            sale_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            warehouse_id TEXT NOT NULL,
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
+            line_total REAL NOT NULL CHECK (line_total >= 0),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+            FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
+        )` },
+        { name: 'sale_returns', sql: `CREATE TABLE sale_returns (
+            id TEXT PRIMARY KEY,
+            sale_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            warehouse_id TEXT NOT NULL,
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            line_total REAL NOT NULL CHECK (line_total >= 0),
+            reason TEXT,
+            created_by TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+            FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+        )` },
+        { name: 'stock_transfers', sql: `CREATE TABLE stock_transfers (
+            id TEXT PRIMARY KEY,
+            product_id TEXT NOT NULL,
+            from_warehouse_id TEXT NOT NULL,
+            to_warehouse_id TEXT NOT NULL,
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            notes TEXT,
+            created_by TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (from_warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+        )` },
+        { name: 'stock_movements', sql: `CREATE TABLE stock_movements (
+            id TEXT PRIMARY KEY,
+            product_id TEXT NOT NULL,
+            warehouse_id TEXT NOT NULL,
+            movement_type TEXT NOT NULL CHECK (movement_type IN ('in', 'out', 'adjustment_positive', 'adjustment_negative', 'transfer_in', 'transfer_out', 'return_in')),
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
+            quantity INTEGER NOT NULL CHECK (quantity > 0),
+            reference_id TEXT,
+            reference_type TEXT CHECK (reference_type IN ('sale', 'stock_adjustment', 'sale_return', 'product_create', 'transfer', 'return')),
+            notes TEXT,
+            created_by TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+        )` }
+    ];
+
+    const needs = tables.filter((t) => {
+        const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(t.name);
+        return row && row.sql && !row.sql.includes("'unit'");
+    });
+    if (needs.length === 0) return;
+
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+        const run = db.transaction(() => {
+            for (const t of needs) {
+                db.exec(`ALTER TABLE ${t.name} RENAME TO ${t.name}_old`);
+                db.exec(t.sql);
+                db.exec(`INSERT INTO ${t.name} SELECT * FROM ${t.name}_old`);
+                db.exec(`DROP TABLE ${t.name}_old`);
+            }
+            db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+                CREATE INDEX IF NOT EXISTS idx_sale_returns_sale ON sale_returns(sale_id);
+                CREATE INDEX IF NOT EXISTS idx_stock_transfers_product ON stock_transfers(product_id);
+                CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id);
+                CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements(created_at);
+            `);
+        });
+        run();
+    } finally {
+        db.exec('PRAGMA foreign_keys = ON');
+    }
 }
 
 function initializeDatabase() {
@@ -67,6 +176,7 @@ function initializeDatabase() {
             unit_price REAL NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
             carton_price REAL NOT NULL DEFAULT 0 CHECK (carton_price >= 0),
             liter20_price REAL NOT NULL DEFAULT 0 CHECK (liter20_price >= 0),
+            units_per_carton INTEGER NOT NULL DEFAULT 0 CHECK (units_per_carton >= 0),
             low_stock_threshold INTEGER NOT NULL DEFAULT 10 CHECK (low_stock_threshold >= 0),
             is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -77,6 +187,7 @@ function initializeDatabase() {
             id TEXT PRIMARY KEY,
             product_id TEXT NOT NULL,
             warehouse_id TEXT NOT NULL,
+            unit_stock INTEGER NOT NULL DEFAULT 0 CHECK (unit_stock >= 0),
             carton_stock INTEGER NOT NULL DEFAULT 0 CHECK (carton_stock >= 0),
             liter20_stock INTEGER NOT NULL DEFAULT 0 CHECK (liter20_stock >= 0),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -129,7 +240,7 @@ function initializeDatabase() {
             sale_id TEXT NOT NULL,
             product_id TEXT NOT NULL,
             warehouse_id TEXT NOT NULL,
-            unit_type TEXT NOT NULL CHECK (unit_type IN ('carton', 'liter20')),
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
@@ -145,7 +256,7 @@ function initializeDatabase() {
             sale_id TEXT NOT NULL,
             product_id TEXT NOT NULL,
             warehouse_id TEXT NOT NULL,
-            unit_type TEXT NOT NULL CHECK (unit_type IN ('carton', 'liter20')),
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
             line_total REAL NOT NULL CHECK (line_total >= 0),
@@ -163,7 +274,7 @@ function initializeDatabase() {
             product_id TEXT NOT NULL,
             from_warehouse_id TEXT NOT NULL,
             to_warehouse_id TEXT NOT NULL,
-            unit_type TEXT NOT NULL CHECK (unit_type IN ('carton', 'liter20')),
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             notes TEXT,
             created_by TEXT NOT NULL,
@@ -179,7 +290,7 @@ function initializeDatabase() {
             product_id TEXT NOT NULL,
             warehouse_id TEXT NOT NULL,
             movement_type TEXT NOT NULL CHECK (movement_type IN ('in', 'out', 'adjustment_positive', 'adjustment_negative', 'transfer_in', 'transfer_out', 'return_in')),
-            unit_type TEXT NOT NULL CHECK (unit_type IN ('carton', 'liter20')),
+            unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             reference_id TEXT,
             reference_type TEXT CHECK (reference_type IN ('sale', 'stock_adjustment', 'sale_return', 'product_create', 'transfer', 'return')),
@@ -241,6 +352,7 @@ function initializeDatabase() {
     `);
 
     migrateSchema();
+    migrateUnitTypeCheck();
 
     const warehouseCount = db.prepare('SELECT COUNT(*) as count FROM warehouses').get().count;
     if (warehouseCount === 0) {

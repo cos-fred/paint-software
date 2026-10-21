@@ -46,7 +46,7 @@ function formatCurrency(amount) {
 }
 
 function formatSaleUnitType(type) {
-    const labels = { carton: 'Carton', liter20: '20L Container' };
+    const labels = { unit: 'Unit', carton: 'Carton', liter20: '20L Container' };
     return labels[type] || type;
 }
 
@@ -64,6 +64,12 @@ function escapeAttr(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function splitStockUnits(totalUnits, unitsPerCarton) {
+    const per = unitsPerCarton > 0 ? unitsPerCarton : 0;
+    if (per <= 0) return { cartons: 0, units: totalUnits };
+    return { cartons: Math.floor(totalUnits / per), units: totalUnits % per };
 }
 
 function showToast(message, type = 'info') {
@@ -361,6 +367,7 @@ function setupEventListeners() {
     document.getElementById('add-product-btn')?.addEventListener('click', () => openProductModal());
     document.getElementById('product-form')?.addEventListener('submit', handleProductSubmit);
     document.getElementById('product-unit-price')?.addEventListener('input', updateCartonPrice);
+    document.getElementById('product-units-per-carton')?.addEventListener('input', updateCartonPrice);
     document.getElementById('product-carton-price')?.addEventListener('input', () => {
         document.getElementById('product-carton-price').dataset.autoSet = 'false';
     });
@@ -560,7 +567,7 @@ async function loadDashboard() {
             </div>` : ''}
             <div class="stat-card warning">
                 <div class="stat-icon">📊</div>
-                <div class="stat-info"><h4>Cartons + 20L (total)</h4><div class="stat-value">${inventory.summary?.total_stock_items ?? 0}</div></div>
+                <div class="stat-info"><h4>Units + 20L (total)</h4><div class="stat-value">${inventory.summary?.total_stock_items ?? 0}</div></div>
             </div>
             <div class="stat-card danger">
                 <div class="stat-icon">⚠️</div>
@@ -578,11 +585,14 @@ async function loadDashboard() {
 
         const lowStockItems = inventory.low_stock_items || [];
         document.getElementById('low-stock-list').innerHTML = lowStockItems.length > 0
-            ? lowStockItems.slice(0, 5).map(p => `
+            ? lowStockItems.slice(0, 5).map(p => {
+                const split = splitStockUnits(p.unit_stock, p.units_per_carton);
+                return `
                 <div class="alert-item alert-warning">
-                    <strong>${escapeHtml(p.name)}</strong> — Cartons: ${p.carton_stock}, 20L: ${p.liter20_stock}
+                    <strong>${escapeHtml(p.name)}</strong> — Cartons: ${split.cartons}, Units: ${split.units}, 20L: ${p.liter20_stock}
                     <small>(Threshold: ${p.low_stock_threshold})</small>
-                </div>`).join('')
+                </div>`;
+            }).join('')
             : '<div class="empty-state"><h4>All Good</h4><p>No low stock alerts</p></div>';
 
         const recentRes = await fetchWithAuth(`${API_BASE}/sales?limit=5${warehouseId ? '&warehouse_id=' + warehouseId : ''}`);
@@ -638,24 +648,27 @@ async function loadStock() {
         const tbody = document.querySelector('#stock-table tbody');
 
         if (!products.length) {
-            tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Products</h4><p>Add products to see stock here</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" class="empty-state"><h4>No Products</h4><p>Add products to see stock here</p></td></tr>';
             return;
         }
 
         const whName = warehouseId ? (warehousesCache.find(w => w.id === warehouseId)?.name || 'Selected') : 'All (combined)';
 
         tbody.innerHTML = products.map(p => {
-            const cartonStock = p.warehouse_carton_stock ?? p.total_carton_stock ?? 0;
+            const unitStock = p.warehouse_unit_stock ?? p.total_unit_stock ?? 0;
             const liter20Stock = p.warehouse_liter20_stock ?? p.total_liter20_stock ?? 0;
-            const totalValue = (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
-            const isLow = cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
+            const split = splitStockUnits(unitStock, p.units_per_carton);
+            const totalValue = (p.unit_price * unitStock) + (p.liter20_price * liter20Stock);
+            const isLow = unitStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
             const cls = (stock) => stock <= p.low_stock_threshold ? 'stock-low' : (stock === 0 ? 'stock-warning' : 'stock-ok');
             return `<tr${isLow ? ' class="low-stock-row"' : ''}>
                 <td><strong>${escapeHtml(p.name)}</strong><br><small style="color:var(--text-muted)">${escapeHtml(p.description || '—')}</small></td>
                 <td>${escapeHtml(whName)}</td>
+                <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${cls(cartonStock)}">${cartonStock}</td>
+                <td class="${cls(split.cartons)}">${split.cartons}</td>
+                <td class="${cls(split.units)}">${split.units}</td>
                 <td class="${cls(liter20Stock)}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
@@ -707,7 +720,7 @@ async function loadCurrentStockForAdjustment() {
     try {
         const res = await fetchWithAuth(`${API_BASE}/products/${productId}?warehouse_id=${warehouseId}`);
         const product = await res.json();
-        const fieldMap = { carton: 'warehouse_carton_stock', liter20: 'warehouse_liter20_stock' };
+        const fieldMap = { unit: 'warehouse_unit_stock', carton: 'warehouse_unit_stock', liter20: 'warehouse_liter20_stock' };
         document.getElementById('stock-adjust-current').value = product[fieldMap[unitType]] ?? 0;
     } catch (err) { console.error(err); }
 }
@@ -757,17 +770,19 @@ async function loadProducts() {
         }
 
         tbody.innerHTML = products.map(p => {
-            const cartonStock = p.total_carton_stock ?? 0;
+            const unitStock = p.total_unit_stock ?? 0;
             const liter20Stock = p.total_liter20_stock ?? 0;
-            const totalValue = (p.carton_price * cartonStock) + (p.liter20_price * liter20Stock);
-            const isLow = cartonStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
+            const split = splitStockUnits(unitStock, p.units_per_carton);
+            const totalValue = (p.unit_price * unitStock) + (p.liter20_price * liter20Stock);
+            const isLow = unitStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
             return `<tr${isLow ? ' class="low-stock-row"' : ''}>
                 <td><strong>${escapeHtml(p.name)}</strong>${p.description ? `<br><small style="color:var(--text-muted)">${escapeHtml(p.description)}</small>` : ''}</td>
                 <td>${escapeHtml(p.sku || '—')}</td>
                 <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${cartonStock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${cartonStock}</td>
+                <td class="${split.cartons <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${split.cartons}</td>
+                <td class="${split.units <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${split.units}</td>
                 <td class="${liter20Stock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
@@ -807,11 +822,13 @@ async function openProductModal(productId = null) {
                 document.getElementById('product-name').value = p.name;
                 document.getElementById('product-sku').value = p.sku || '';
                 document.getElementById('product-description').value = p.description || '';
+                document.getElementById('product-units-per-carton').value = p.units_per_carton || '';
                 document.getElementById('product-unit-price').value = p.unit_price;
                 document.getElementById('product-carton-price').value = p.carton_price;
                 document.getElementById('product-liter20-price').value = p.liter20_price;
                 document.getElementById('product-threshold').value = p.low_stock_threshold;
-                const cartonWasAuto = Math.abs(p.carton_price - (p.unit_price * 12)) < 0.01;
+                const upc = p.units_per_carton > 0 ? p.units_per_carton : 1;
+                const cartonWasAuto = Math.abs(p.carton_price - (p.unit_price * upc)) < 0.01;
                 document.getElementById('product-carton-price').dataset.autoSet = cartonWasAuto ? 'true' : 'false';
             }).catch(err => showToast(err.message, 'error'));
     } else {
@@ -824,9 +841,10 @@ function editProduct(id) { openProductModal(id); }
 
 function updateCartonPrice() {
     const unitPrice = parseFloat(document.getElementById('product-unit-price').value) || 0;
+    const unitsPerCarton = parseInt(document.getElementById('product-units-per-carton').value, 10) || 0;
     const cartonField = document.getElementById('product-carton-price');
     if (!cartonField.value || cartonField.dataset.autoSet === 'true') {
-        cartonField.value = (unitPrice * 12).toFixed(2);
+        cartonField.value = (unitPrice * unitsPerCarton).toFixed(2);
         cartonField.dataset.autoSet = 'true';
     }
 }
@@ -838,6 +856,7 @@ async function handleProductSubmit(e) {
         name: document.getElementById('product-name').value.trim(),
         sku: document.getElementById('product-sku')?.value.trim() || null,
         description: document.getElementById('product-description').value.trim(),
+        units_per_carton: parseInt(document.getElementById('product-units-per-carton').value, 10) || 0,
         unit_price: parseFloat(document.getElementById('product-unit-price').value),
         carton_price: parseFloat(document.getElementById('product-carton-price').value) || null,
         liter20_price: parseFloat(document.getElementById('product-liter20-price').value) || 0,
@@ -850,7 +869,8 @@ async function handleProductSubmit(e) {
             return;
         }
         data.warehouse_id = warehouseId;
-        data.carton_stock = parseInt(document.getElementById('product-carton-stock')?.value, 10) || 0;
+        data.cartons = parseInt(document.getElementById('product-carton-stock')?.value, 10) || 0;
+        data.loose_units = parseInt(document.getElementById('product-loose-units')?.value, 10) || 0;
         data.liter20_stock = parseInt(document.getElementById('product-liter20-stock')?.value, 10) || 0;
     }
     try {
@@ -1079,6 +1099,7 @@ function buildSaleItemRow() {
     return `<div class="sale-item-row">
         <select class="sale-item-product" required><option value="">Select Product</option></select>
         <select class="sale-item-unit" required>
+            <option value="unit">Unit</option>
             <option value="carton">Carton</option>
             <option value="liter20">20L Container</option>
         </select>
@@ -1115,6 +1136,7 @@ function priceForRow(row) {
     if (!option || !option.value) return 0;
     if (unitType === 'carton') return parseFloat(option.dataset.carton) || 0;
     if (unitType === 'liter20') return parseFloat(option.dataset.liter20) || 0;
+    if (unitType === 'unit') return parseFloat(option.dataset.unit) || 0;
     return 0;
 }
 

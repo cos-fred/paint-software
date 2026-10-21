@@ -35,12 +35,12 @@ describe('Server-authoritative pricing and validation', { concurrency: 1 }, () =
         const warehouses = await request(server, { path: '/api/warehouses', token: adminToken });
         warehouseId = warehouses.body[0].id;
 
-        // unit_price 20 -> carton_price 240
+        // unit_price 20, units_per_carton 12 -> carton_price 240
         const prod = await request(server, {
             method: 'POST',
             path: '/api/products',
             token: adminToken,
-            body: { name: 'Priced Paint', unit_price: 20, warehouse_id: warehouseId, carton_stock: 50 }
+            body: { name: 'Priced Paint', unit_price: 20, units_per_carton: 12, warehouse_id: warehouseId, cartons: 50 }
         });
         assert.equal(prod.status, 201, JSON.stringify(prod.body));
         productId = prod.body.id;

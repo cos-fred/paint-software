@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
-const { stockColumn, UNIT_TYPES } = require('../lib/stock');
+const { stockColumn, toUnits, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 const { parsePositiveInteger, parseLimit } = require('../lib/validation');
 
@@ -73,8 +73,10 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
                 db.prepare(`INSERT INTO sale_returns (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, line_total, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
                     .run(returnId, sale_id, product_id, sale.warehouse_id, unit_type, quantity, unitPrice, lineTotal, reason || null, req.user.id);
 
+                const product = db.prepare('SELECT units_per_carton FROM products WHERE id = ?').get(product_id);
+                const unitsDelta = toUnits(unit_type, quantity, product ? product.units_per_carton : 0);
                 const stockField = stockColumn(unit_type);
-                const restored = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, sale.warehouse_id);
+                const restored = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(unitsDelta, product_id, sale.warehouse_id);
                 if (restored.changes === 0) throw new ClientError(409, 'Product stock row not found for this warehouse');
 
                 db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, notes, created_by) VALUES (?, ?, ?, 'return_in', ?, ?, ?, 'return', ?, ?)`)

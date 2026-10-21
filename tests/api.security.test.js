@@ -94,7 +94,7 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/products',
             token: adminToken,
-            body: { name: 'Interior White', unit_price: 20, warehouse_id: warehouseId, carton_stock: 10, liter20_stock: 4 }
+            body: { name: 'Interior White', unit_price: 20, units_per_carton: 12, warehouse_id: warehouseId, cartons: 10, liter20_stock: 4 }
         });
         assert.equal(adminCreate.status, 201, JSON.stringify(adminCreate.body));
         productId = adminCreate.body.id;
@@ -175,8 +175,8 @@ describe('API security', { concurrency: 1 }, () => {
         assert.equal(pending.status, 400);
 
         const before = getDb().prepare(
-            'SELECT carton_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
-        ).get(productId, warehouseId).carton_stock;
+            'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
+        ).get(productId, warehouseId).unit_stock;
 
         const cancel = await request(server, {
             method: 'DELETE',
@@ -185,9 +185,9 @@ describe('API security', { concurrency: 1 }, () => {
         });
         assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
         const after = getDb().prepare(
-            'SELECT carton_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
+            'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
         ).get(productId, warehouseId);
-        assert.equal(after.carton_stock, before + 1);
+        assert.equal(after.unit_stock, before + 12);
         const saleRow = getDb().prepare('SELECT payment_status FROM sales WHERE id = ?').get(saleId);
         assert.equal(saleRow.payment_status, 'cancelled');
 
@@ -266,7 +266,7 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/products',
             token: extraToken,
-            body: { name: 'Temp Product', unit_price: 5, warehouse_id: warehouseId }
+            body: { name: 'Temp Product', unit_price: 5, units_per_carton: 12, warehouse_id: warehouseId }
         });
         assert.equal(beforeDemote.status, 201, JSON.stringify(beforeDemote.body));
 

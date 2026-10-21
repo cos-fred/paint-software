@@ -40,7 +40,7 @@ router.post('/', requireAdmin, (req, res) => {
                 .run(id, trimmedName, trimmedCode, address || null, city || null, country || 'Ghana');
 
             const products = db.prepare('SELECT id FROM products WHERE is_active = 1').all();
-            const stockInsert = db.prepare('INSERT INTO product_stock (id, product_id, warehouse_id, carton_stock, liter20_stock) VALUES (?, ?, ?, 0, 0)');
+            const stockInsert = db.prepare('INSERT INTO product_stock (id, product_id, warehouse_id, unit_stock, carton_stock, liter20_stock) VALUES (?, ?, ?, 0, 0, 0)');
             for (const p of products) stockInsert.run(uuidv4(), p.id, id);
         });
         transaction();
