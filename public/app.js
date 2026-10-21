@@ -1774,6 +1774,34 @@ async function handleReturnSubmit(e) {
 // AUDIT LOG
 // ===================================================
 
+function formatAuditAction(action) {
+    const labels = {
+        'auth.login': 'User login',
+        'auth.login_failed': 'Failed login',
+        'product.create': 'Create product',
+        'product.update': 'Update product',
+        'product.archive': 'Archive product',
+        'product.delete': 'Delete product',
+        'sale.create': 'Create sale',
+        'sale.status': 'Update sale status',
+        'sale.cancel': 'Cancel sale',
+        'sale.return': 'Process return',
+        'stock.adjust': 'Adjust stock',
+        'stock.transfer': 'Transfer stock',
+        'customer.create': 'Create customer',
+        'customer.update': 'Update customer',
+        'customer.delete': 'Delete customer',
+        'user.create': 'Create user',
+        'user.update': 'Update user',
+        'user.disable': 'Disable user',
+        'user.revoke_sessions': 'Revoke user sessions',
+        'warehouse.create': 'Create warehouse',
+        'warehouse.update': 'Update warehouse',
+        'warehouse.deactivate': 'Deactivate warehouse'
+    };
+    return labels[action] || action;
+}
+
 async function loadAudit() {
     try {
         const search = document.getElementById('audit-search')?.value || '';
@@ -1784,7 +1812,7 @@ async function loadAudit() {
         tbody.innerHTML = logs.map(l => `<tr>
             <td>${new Date(l.created_at).toLocaleString()}</td>
             <td>${escapeHtml(l.user_name || '—')}</td>
-            <td>${escapeHtml(l.action)}</td>
+            <td>${escapeHtml(formatAuditAction(l.action))}</td>
             <td>${escapeHtml(l.entity_type || '')} ${escapeHtml(l.entity_id ? l.entity_id.slice(0,8) : '')}</td>
             <td>${escapeHtml(l.details || '')}</td>
         </tr>`).join('');
