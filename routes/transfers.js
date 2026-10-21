@@ -6,6 +6,7 @@ const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
 const { stockColumn } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
+const { parsePositiveInteger } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -41,31 +42,31 @@ router.post('/', requirePermission('manage_transfers'), (req, res) => {
             return res.status(400).json({ error: 'Source and destination warehouses must be different' });
         }
         if (!['carton', 'liter20'].includes(unit_type)) return res.status(400).json({ error: 'Invalid unit type' });
-        if (quantity <= 0) return res.status(400).json({ error: 'Quantity must be positive' });
+        const qty = parsePositiveInteger(quantity, 'Quantity');
 
         const stockField = stockColumn(unit_type);
         const source = db.prepare(`SELECT ${stockField} as stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?`).get(product_id, from_warehouse_id);
         if (!source) return res.status(404).json({ error: 'Product not found in source warehouse' });
-        if (source.stock < quantity) return res.status(400).json({ error: 'Insufficient stock in source warehouse' });
+        if (source.stock < qty) return res.status(400).json({ error: 'Insufficient stock in source warehouse' });
 
         const transferId = uuidv4();
         const transaction = db.transaction(() => {
-            const deducted = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`).run(quantity, product_id, from_warehouse_id, quantity);
+            const deducted = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`).run(qty, product_id, from_warehouse_id, qty);
             if (deducted.changes === 0) throw new ClientError(400, 'Insufficient stock in source warehouse');
-            db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(quantity, product_id, to_warehouse_id);
+            db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(qty, product_id, to_warehouse_id);
 
             db.prepare(`INSERT INTO stock_transfers (id, product_id, from_warehouse_id, to_warehouse_id, unit_type, quantity, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(transferId, product_id, from_warehouse_id, to_warehouse_id, unit_type, quantity, notes || null, req.user.id);
+                .run(transferId, product_id, from_warehouse_id, to_warehouse_id, unit_type, qty, notes || null, req.user.id);
 
             const mv = db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'transfer', ?, ?)`);
-            mv.run(uuidv4(), product_id, from_warehouse_id, 'transfer_out', unit_type, quantity, transferId, notes || null, req.user.id);
-            mv.run(uuidv4(), product_id, to_warehouse_id, 'transfer_in', unit_type, quantity, transferId, notes || null, req.user.id);
+            mv.run(uuidv4(), product_id, from_warehouse_id, 'transfer_out', unit_type, qty, transferId, notes || null, req.user.id);
+            mv.run(uuidv4(), product_id, to_warehouse_id, 'transfer_in', unit_type, qty, transferId, notes || null, req.user.id);
         });
         transaction();
 
-        checkLowStock(product_id, from_warehouse_id, unit_type, source.stock - quantity, source.stock);
+        checkLowStock(product_id, from_warehouse_id, unit_type, source.stock - qty, source.stock);
 
-        logAudit(req.user.id, 'stock.transfer', 'product', product_id, { from_warehouse_id, to_warehouse_id, unit_type, quantity });
+        logAudit(req.user.id, 'stock.transfer', 'product', product_id, { from_warehouse_id, to_warehouse_id, unit_type, quantity: qty });
         res.status(201).json({ id: transferId, message: 'Stock transferred successfully' });
     } catch (err) {
         sendSafeError(res, err, '[transfers]');

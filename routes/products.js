@@ -6,6 +6,8 @@ const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
 const { stockColumn } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
+const { parsePositiveInteger, parseNonNegativeInteger } = require('../lib/validation');
+const { sanitizeCell } = require('../lib/export');
 
 const router = express.Router();
 const db = getDb();
@@ -112,8 +114,8 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
         const warehouse = db.prepare('SELECT id FROM warehouses WHERE id = ? AND is_active = 1').get(warehouse_id);
         if (!warehouse) return res.status(400).json({ error: 'Invalid warehouse' });
 
-        const initialCartons = Math.max(0, Number.parseInt(carton_stock, 10) || 0);
-        const initialLiter20 = Math.max(0, Number.parseInt(liter20_stock, 10) || 0);
+        const initialCartons = parseNonNegativeInteger(carton_stock ?? 0, 'Initial carton stock');
+        const initialLiter20 = parseNonNegativeInteger(liter20_stock ?? 0, 'Initial 20L stock');
         const targetWarehouseId = String(warehouse_id).trim();
 
         if (sku) {
@@ -203,7 +205,7 @@ router.post('/:id/stock-movement', requirePermission('manage_products'), (req, r
         const productId = req.params.id;
         if (!movement_type || !unit_type || quantity === undefined || !warehouse_id) return res.status(400).json({ error: 'Movement type, unit type, quantity, and warehouse are required' });
         if (!['carton', 'liter20'].includes(unit_type)) return res.status(400).json({ error: 'Invalid unit type' });
-        if (quantity <= 0) return res.status(400).json({ error: 'Quantity must be positive' });
+        const qty = parsePositiveInteger(quantity, 'Quantity');
 
         const stockField = stockColumn(unit_type);
         const row = db.prepare(`SELECT ${stockField} as current_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?`).get(productId, warehouse_id);
@@ -211,9 +213,9 @@ router.post('/:id/stock-movement', requirePermission('manage_products'), (req, r
 
         const currentStock = row.current_stock;
         let newStock;
-        if (movement_type === 'in' || movement_type === 'adjustment_positive') newStock = currentStock + quantity;
+        if (movement_type === 'in' || movement_type === 'adjustment_positive') newStock = currentStock + qty;
         else if (movement_type === 'out' || movement_type === 'adjustment_negative') {
-            newStock = currentStock - quantity;
+            newStock = currentStock - qty;
             if (newStock < 0) return res.status(400).json({ error: 'Insufficient stock in this warehouse' });
         } else return res.status(400).json({ error: 'Invalid movement type' });
 
@@ -221,12 +223,12 @@ router.post('/:id/stock-movement', requirePermission('manage_products'), (req, r
             const updated = db.prepare(`UPDATE product_stock SET ${stockField} = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(newStock, productId, warehouse_id);
             if (updated.changes === 0) throw new ClientError(409, 'Stock could not be updated');
             db.prepare(`INSERT INTO stock_movements (id, product_id, warehouse_id, movement_type, unit_type, quantity, reference_id, reference_type, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(uuidv4(), productId, warehouse_id, movement_type, unit_type, quantity, reference_id || null, reference_type || 'stock_adjustment', notes || null, req.user.id);
+                .run(uuidv4(), productId, warehouse_id, movement_type, unit_type, qty, reference_id || null, reference_type || 'stock_adjustment', notes || null, req.user.id);
         });
         transaction();
 
         checkLowStock(productId, warehouse_id, unit_type, newStock, currentStock);
-        logAudit(req.user.id, 'stock.adjust', 'product', productId, { movement_type, unit_type, quantity, warehouse_id });
+        logAudit(req.user.id, 'stock.adjust', 'product', productId, { movement_type, unit_type, quantity: qty, warehouse_id });
         res.json({ message: 'Stock movement recorded', new_stock: newStock });
     } catch (err) {
         sendSafeError(res, err, '[products]');
@@ -303,7 +305,7 @@ router.get('/stock/export', (req, res) => {
                 ws.columns = columns;
 
                 rows.forEach(r => {
-                    const row = { name: r.name, sku: r.sku || '', carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold };
+                    const row = { name: sanitizeCell(r.name), sku: sanitizeCell(r.sku || ''), carton_price: r.carton_price, liter20_price: r.liter20_price, carton_stock: r.carton_stock, liter20_stock: r.liter20_stock, threshold: r.low_stock_threshold };
                     if (isAdmin) row.total_value = (r.carton_price * r.carton_stock) + (r.liter20_price * r.liter20_stock);
                     ws.addRow(row);
                 });

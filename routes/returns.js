@@ -5,6 +5,7 @@ const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { stockColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
+const { parsePositiveInteger } = require('../lib/validation');
 
 const router = express.Router();
 const db = getDb();
@@ -41,11 +42,11 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
         const transaction = db.transaction(() => {
             const summed = new Map();
             for (const item of items) {
-                const product_id = item.product_id;
-                const unit_type = item.unit_type;
-                const quantity = Number(item.quantity);
+                const product_id = item && item.product_id;
+                const unit_type = item && item.unit_type;
+                const quantity = parsePositiveInteger(item && item.quantity, 'Quantity');
 
-                if (!product_id || !unit_type || !Number.isInteger(quantity) || quantity <= 0) {
+                if (!product_id || !unit_type) {
                     throw new ClientError(400, 'Invalid return item');
                 }
                 if (!UNIT_TYPES.includes(unit_type)) throw new ClientError(400, 'Invalid unit type');

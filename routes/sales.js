@@ -6,6 +6,8 @@ const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
 const { stockColumn, priceColumn, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
+const { parsePositiveInteger, parseFiniteNumber } = require('../lib/validation');
+const { sanitizeCell } = require('../lib/export');
 
 const router = express.Router();
 const db = getDb();
@@ -99,7 +101,7 @@ router.get('/export', (req, res) => {
             { header: 'Payment', key: 'payment_method', width: 15 },
             { header: 'Status', key: 'payment_status', width: 15 }
         ];
-        rows.forEach(s => ws.addRow({ date: new Date(s.sale_date).toLocaleString(), customer: s.customer_name || 'Walk-in', warehouse: s.warehouse_name, subtotal: s.subtotal, tax: s.tax, discount: s.discount, total: s.total, payment_method: s.payment_method, payment_status: s.payment_status }));
+        rows.forEach(s => ws.addRow({ date: new Date(s.sale_date).toLocaleString(), customer: sanitizeCell(s.customer_name || 'Walk-in'), warehouse: sanitizeCell(s.warehouse_name), subtotal: s.subtotal, tax: s.tax, discount: s.discount, total: s.total, payment_method: s.payment_method, payment_status: s.payment_status }));
         ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
         ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
         ['subtotal', 'tax', 'discount', 'total'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
@@ -189,9 +191,9 @@ router.post('/', (req, res) => {
         const validatedItems = [];
 
         for (const item of items) {
+            if (!item || typeof item !== 'object') throw new ClientError(400, 'Invalid sale item');
             if (!UNIT_TYPES.includes(item.unit_type)) throw new ClientError(400, 'Invalid unit type');
-            const quantity = Number.parseInt(item.quantity, 10);
-            if (!Number.isInteger(quantity) || quantity <= 0) throw new ClientError(400, 'Quantity must be a positive integer');
+            const quantity = parsePositiveInteger(item.quantity, 'Quantity');
 
             const stockField = stockColumn(item.unit_type);
             const priceField = priceColumn(item.unit_type);
@@ -203,25 +205,41 @@ router.post('/', (req, res) => {
             if (!row) throw new ClientError(400, 'Product not found in warehouse');
             if (row.stock < quantity) throw new ClientError(400, `Insufficient stock for ${row.name}`);
 
-            const unitPrice = item.unit_price != null ? Number(item.unit_price) : row.price;
-            if (!(unitPrice >= 0)) throw new ClientError(400, 'Invalid unit price');
+            // Server-authoritative pricing: always use the configured product price.
+            const unitPrice = row.price;
+
+            const lineDiscount = item.discount != null ? parseFiniteNumber(item.discount, 'Line discount') : 0;
+            if (lineDiscount < 0) throw new ClientError(400, 'Line discount cannot be negative');
+
             const gross = quantity * unitPrice;
-            const lineDiscount = item.discount || 0;
-            const lineTotal = Math.max(0, gross - lineDiscount);
-            subtotal += lineTotal;
-            validatedItems.push({ ...item, quantity, unit_price: unitPrice, discount: lineDiscount, line_total: lineTotal, oldStock: row.stock });
+            if (lineDiscount > gross) throw new ClientError(400, 'Line discount exceeds item total');
+            const lineTotal = round2(gross - lineDiscount);
+            subtotal = round2(subtotal + lineTotal);
+            validatedItems.push({
+                product_id: item.product_id,
+                unit_type: item.unit_type,
+                quantity,
+                unit_price: unitPrice,
+                discount: lineDiscount,
+                line_total: lineTotal,
+                oldStock: row.stock
+            });
         }
 
         const taxRate = getTaxRate();
-        const tax = subtotal * taxRate;
-        const discountAmount = computeDiscount(discount || 0, discount_type || 'amount', subtotal);
-        const total = Math.max(0, subtotal + tax - discountAmount);
+        const tax = round2(subtotal * taxRate);
+        const discountType = discount_type || 'amount';
+        if (!['amount', 'percent'].includes(discountType)) throw new ClientError(400, 'Invalid discount type');
+        const saleDiscount = discount != null ? parseFiniteNumber(discount, 'Discount') : 0;
+        if (saleDiscount < 0) throw new ClientError(400, 'Discount cannot be negative');
+        const discountAmount = round2(computeDiscount(saleDiscount, discountType, subtotal));
+        const total = round2(subtotal + tax - discountAmount);
 
         const transaction = db.transaction(() => {
             db.prepare(
                 `INSERT INTO sales (id, customer_id, warehouse_id, subtotal, tax, discount, discount_type, total, payment_method, payment_status, notes, created_by)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, discountAmount, discount_type || 'amount', total, method, status, notes || null, req.user.id);
+            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, discountAmount, discountType, total, method, status, notes || null, req.user.id);
 
             for (const item of validatedItems) {
                 const itemId = uuidv4();
@@ -250,8 +268,16 @@ router.post('/', (req, res) => {
     }
 });
 
+function round2(n) {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 function computeDiscount(discount, type, subtotal) {
-    if (type === 'percent') return Math.min(subtotal, subtotal * (discount / 100));
+    if (type === 'percent') {
+        if (discount > 100) throw new ClientError(400, 'Discount percentage cannot exceed 100%');
+        return subtotal * (discount / 100);
+    }
+    if (discount > subtotal) throw new ClientError(400, 'Discount exceeds subtotal');
     return discount;
 }
 
