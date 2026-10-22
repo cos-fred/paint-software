@@ -1084,7 +1084,14 @@ async function openSaleModal() {
     await loadCustomersForSelect();
     await loadWarehouses();
     await loadProductsForSelect();
-    document.getElementById('sale-warehouse')?.addEventListener('change', loadProductsForSelect);
+    // Remove any previously attached warehouse-change listener before adding a new
+    // one so that opening the sale modal multiple times doesn't stack duplicates.
+    const whSelect = document.getElementById('sale-warehouse');
+    if (whSelect) {
+        if (saleWarehouseChangeHandler) whSelect.removeEventListener('change', saleWarehouseChangeHandler);
+        saleWarehouseChangeHandler = loadProductsForSelect;
+        whSelect.addEventListener('change', saleWarehouseChangeHandler);
+    }
     attachSaleItemEvents(document.querySelector('.sale-item-row'));
     updateSaleSummary();
     showModal('sale-modal');
@@ -1253,19 +1260,24 @@ function displayReceipt(receipt) {
             <table class="receipt-items">
                 <thead><tr><th>Item</th><th>Type</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
                 <tbody>
-                    ${(receipt.items || []).map(item => `
+                    ${(receipt.items || []).map(item => {
+                        // Show the effective per-unit price (base + markup - discount)
+                        // so the customer sees what they actually paid per unit,
+                        // without exposing the markup breakdown.
+                        const effectiveUnit = (item.unit_price || 0) + (item.extra || 0) - (item.discount || 0);
+                        const effectiveTotal = Math.max(0, effectiveUnit * item.quantity);
+                        return `
                     <tr>
                         <td>${escapeHtml(item.product_name)}</td>
                         <td>${escapeHtml(formatSaleUnitType(item.unit_type))}</td>
                         <td>${item.quantity}</td>
-                        <td>${formatCurrency(item.unit_price)}</td>
-                        <td>${formatCurrency(item.line_total)}</td>
-                    </tr>`).join('')}
+                        <td>${formatCurrency(effectiveUnit)}</td>
+                        <td>${formatCurrency(effectiveTotal)}</td>
+                    </tr>`;
+                    }).join('')}
                 </tbody>
             </table>
             <div class="receipt-totals">
-                <div class="receipt-row"><span>Subtotal:</span><span>${formatCurrency(receipt.subtotal)}</span></div>
-                ${receipt.markup > 0 ? `<div class="receipt-row"><span>Markup:</span><span>${formatCurrency(receipt.markup)}</span></div>` : ''}
                 ${receipt.discount > 0 ? `<div class="receipt-row"><span>Discount:</span><span>-${formatCurrency(receipt.discount)}</span></div>` : ''}
                 <div class="receipt-row total"><span>TOTAL:</span><span>${formatCurrency(receipt.total)}</span></div>
                 <div class="receipt-row"><span>Payment:</span><span>${escapeHtml(receipt.payment_method)}</span></div>
@@ -1840,9 +1852,18 @@ async function loadReturns() {
 async function openReturnModal(saleId) {
     document.getElementById('return-form').reset();
     const sales = await (await fetchWithAuth(`${API_BASE}/sales?limit=100`)).json();
-    document.getElementById('return-sale').innerHTML = '<option value="">Select Sale</option>' + sales.map(s => `<option value="${s.id}">#${s.id.slice(0,8)} — ${escapeHtml(s.customer_name || 'Walk-in')} — ${formatCurrency(s.total)}</option>`).join('');
-    if (saleId) document.getElementById('return-sale').value = saleId;
-    document.getElementById('return-sale').addEventListener('change', async function () {
+
+    // Replace the select element entirely so any change listeners from a
+    // previous modal open are removed before we attach the new one.
+    const oldSel = document.getElementById('return-sale');
+    const newSel = oldSel.cloneNode(false);          // clone without children
+    oldSel.replaceWith(newSel);
+    const returnSaleSelect = document.getElementById('return-sale');
+
+    returnSaleSelect.innerHTML = '<option value="">Select Sale</option>' + sales.map(s => `<option value="${s.id}">#${s.id.slice(0,8)} — ${escapeHtml(s.customer_name || 'Walk-in')} — ${formatCurrency(s.total)}</option>`).join('');
+    if (saleId) returnSaleSelect.value = saleId;
+
+    returnSaleSelect.addEventListener('change', async function () {
         const id = this.value;
         const container = document.getElementById('return-items-container');
         if (!id) { container.innerHTML = ''; return; }
