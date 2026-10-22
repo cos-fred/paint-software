@@ -17,9 +17,9 @@ A comprehensive stock and inventory management system built for paint businesses
 - Total spent and average purchase analytics
 
 ### Sales & Receipts
-- **Multi-unit sales**: Sell by unit, carton (12), or 20L container
-- **Automatic pricing**: Carton = 12× unit price, 20L = custom price
-- **Professional receipts**: Company branding, itemized details, tax calculation
+- **Multi-unit sales**: Sell by unit, carton (configurable units per carton), or 20L container
+- **Automatic pricing**: Carton = units-per-carton × unit price, 20L = custom price
+- **Professional receipts**: Company branding, itemized details, markup and discounts
 - **Payment tracking**: Cash, card, transfer, credit with status management
 - **Walk-in customers**: Quick sales without customer selection
 
@@ -30,7 +30,7 @@ A comprehensive stock and inventory management system built for paint businesses
 
 ### Reports & Analytics
 - **Inventory value**: Total worth by product and category
-- **Sales summary**: Revenue, tax, discounts, average sale
+- **Sales summary**: Revenue, markup, discounts, average sale
 - **Top products**: Best sellers by quantity and revenue
 - **Top customers**: Highest spending customers
 - **Daily sales chart**: 30-day visual revenue trend

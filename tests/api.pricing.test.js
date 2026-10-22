@@ -44,9 +44,6 @@ describe('Server-authoritative pricing and validation', { concurrency: 1 }, () =
         });
         assert.equal(prod.status, 201, JSON.stringify(prod.body));
         productId = prod.body.id;
-
-        // Disable tax so total equals subtotal for deterministic assertions.
-        await request(server, { method: 'PUT', path: '/api/settings/tax_enabled', token: adminToken, body: { value: 'false' } });
     });
 
     after(async () => {

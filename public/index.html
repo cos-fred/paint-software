@@ -297,6 +297,7 @@
                                         <th>Customer</th>
                                         <th>Items</th>
                                         <th>Subtotal</th>
+                                        <th>Discount</th>
                                         <th>Markup</th>
                                         <th>Total</th>
                                         <th>Payment</th>
@@ -867,8 +868,9 @@
                         </div>
                     </div>
                 <div class="sale-summary">
-                    <div class="summary-row"><span>Subtotal:</span> <span id="sale-subtotal">₵0.00</span></div>
+                    <div class="summary-row"><span>Gross:</span> <span id="sale-gross">₵0.00</span></div>
                     <div class="summary-row" id="sale-discount-row" style="display:none;"><span>Discount:</span> <span id="sale-discount" style="color:var(--danger)"></span></div>
+                    <div class="summary-row"><span>Subtotal:</span> <span id="sale-subtotal">₵0.00</span></div>
                     <div class="summary-row"><span>Markup:</span> <span id="sale-markup">₵0.00</span></div>
                     <div class="summary-row total"><span>Total:</span> <span id="sale-total">₵0.00</span></div>
                 </div>
@@ -1158,6 +1160,7 @@
     <div id="toast-container" class="toast-container"></div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/stock.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

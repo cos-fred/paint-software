@@ -64,51 +64,9 @@ function escapeAttr(value) {
         .replace(/'/g, '&#39;');
 }
 
-function splitStockUnits(totalUnits, unitsPerCarton) {
-    const per = unitsPerCarton > 0 ? unitsPerCarton : 0;
-    if (per <= 0) return { cartons: 0, units: totalUnits };
-    return { cartons: Math.floor(totalUnits / per), units: totalUnits % per };
-}
-
-function getProductStockStatus(p, unitStock = 0, liter20Stock = 0) {
-    const unitsPerCarton = p.units_per_carton || 0;
-    const threshold = p.low_stock_threshold ?? 10;
-    const split = splitStockUnits(unitStock, unitsPerCarton);
-
-    // If product has cartons defined (> 0), carton stock is the number of full cartons.
-    // If not, it falls back to raw units.
-    const cartonStock = unitsPerCarton > 0 ? split.cartons : unitStock;
-    const isCartonLow = cartonStock <= threshold;
-
-    const has20L = (p.liter20_price > 0 || liter20Stock > 0);
-    const isLiter20Low = has20L && (liter20Stock <= threshold);
-
-    const isLow = isCartonLow || isLiter20Low;
-
-    let lowStockLabel = 'OK';
-    let lowStockReason = null;
-    if (isCartonLow && isLiter20Low) {
-        lowStockReason = 'both';
-        lowStockLabel = unitsPerCarton > 0 ? 'Low on Cartons & 20L' : 'Low on Units & 20L';
-    } else if (isCartonLow) {
-        lowStockReason = 'carton';
-        lowStockLabel = unitsPerCarton > 0 ? 'Low on Cartons' : 'Low on Units';
-    } else if (isLiter20Low) {
-        lowStockReason = 'liter20';
-        lowStockLabel = 'Low on 20L';
-    }
-
-    return {
-        cartons: split.cartons,
-        units: split.units,
-        cartonStock,
-        isCartonLow,
-        isLiter20Low,
-        isLow,
-        lowStockReason,
-        lowStockLabel
-    };
-}
+// Shared with the server (served from /stock.js) so stock and low-stock rules
+// cannot drift between the API and the UI.
+const { getProductStockStatus } = window.PaintStock;
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
@@ -159,6 +117,15 @@ async function fetchWithAuth(url, options = {}) {
     if (res.status === 401) {
         logout();
         throw new Error('Session expired. Please log in again.');
+    }
+    if (res.status === 403) {
+        // A disabled account cannot recover by staying logged in. Other 403s
+        // (e.g. "Admin access required") must not terminate the session.
+        const body = await res.clone().json().catch(() => ({}));
+        if (/disabled/i.test(body.error || '')) {
+            logout();
+            throw new Error('Your account has been disabled. Please contact an administrator.');
+        }
     }
     return res;
 }
@@ -565,7 +532,7 @@ async function loadWarehouses() {
             const current = select.value;
             const allLabel = (id === 'sale-warehouse' || id === 'stock-adjust-warehouse' || id === 'product-initial-warehouse') ? 'Select Warehouse' : 'All Warehouses';
             select.innerHTML = `<option value="">${allLabel}</option>` +
-                warehousesCache.map(w => `<option value="${w.id}">${escapeHtml(w.name)} (${w.code})</option>`).join('');
+                warehousesCache.map(w => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.code)})</option>`).join('');
             if (current) select.value = current;
         });
     } catch (err) {
@@ -715,7 +682,7 @@ async function loadStock() {
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
                 <td class="${status.isCartonLow ? 'stock-low' : 'stock-ok'}">${status.cartons}</td>
-                <td class="stock-ok">${status.units}</td>
+                <td class="${unitStock === 0 ? 'stock-low' : 'stock-ok'}">${status.units}</td>
                 <td class="${status.isLiter20Low ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
@@ -874,7 +841,7 @@ async function loadProducts() {
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
                 <td class="${status.isCartonLow ? 'stock-low' : 'stock-ok'}">${status.cartons}</td>
-                <td class="stock-ok">${status.units}</td>
+                <td class="${unitStock === 0 ? 'stock-low' : 'stock-ok'}">${status.units}</td>
                 <td class="${status.isLiter20Low ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
@@ -1144,7 +1111,7 @@ async function loadSales() {
         const isAdmin = currentUser?.role === 'admin';
 
         if (!sales.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><h4>No Sales</h4><p>Click "New Sale" to record your first sale</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Sales</h4><p>Click "New Sale" to record your first sale</p></td></tr>';
             return;
         }
 
@@ -1154,6 +1121,7 @@ async function loadSales() {
                 <td>${escapeHtml(s.customer_name || 'Walk-in')}</td>
                 <td>${s.item_count ?? '—'}</td>
                 <td>${formatCurrency(s.subtotal)}</td>
+                <td>${formatCurrency(s.discount)}</td>
                 <td>${formatCurrency(s.markup)}</td>
                 <td><strong>${formatCurrency(s.total)}</strong></td>
                 <td>${escapeHtml(s.payment_method)}</td>
@@ -1274,7 +1242,8 @@ function updateSaleSummary() {
     const subtotal = Math.max(0, gross - totalDiscount);
     const total = Math.max(0, subtotal + markup);
 
-    document.getElementById('sale-subtotal').textContent = formatCurrency(gross);
+    document.getElementById('sale-gross').textContent = formatCurrency(gross);
+    document.getElementById('sale-subtotal').textContent = formatCurrency(subtotal);
     document.getElementById('sale-markup').textContent = formatCurrency(markup);
     document.getElementById('sale-total').textContent = formatCurrency(total);
 
@@ -1589,7 +1558,7 @@ async function loadSettings() {
         const sv = settings.find(s => s.key === 'show_total_value');
         if (sv) showTotalValue = sv.value !== 'false';
         const cur = settings.find(s => s.key === 'currency');
-        if (cur) currencySymbol = CURRENCY_SYMBOLS[cur.value] || (cur.value ? cur.value + ' ' : '₵');
+        if (cur) currencySymbol = CURRENCY_SYMBOLS[cur.value] || (/^[A-Z]{3}$/.test(cur.value) ? cur.value + ' ' : '₵');
         const th = settings.find(s => s.key === 'low_stock_threshold_default');
         if (th) defaultThreshold = Number.isSafeInteger(parseInt(th.value, 10)) && parseInt(th.value, 10) >= 0 ? parseInt(th.value, 10) : 10;
         applyTotalValueVisibility();
@@ -1619,6 +1588,7 @@ async function handleSystemSettings(e) {
         }
         showTotalValue = document.getElementById('setting-show_total_value')?.value !== 'false';
         applyTotalValueVisibility();
+        await loadSettings();
         showToast('System settings saved', 'success');
     } catch (err) { showToast(err.message, 'error'); }
 }

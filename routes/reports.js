@@ -106,7 +106,9 @@ router.get('/sales/summary', (req, res) => {
 router.get('/sales/by-product', (req, res) => {
     try {
         const { start_date, end_date, warehouse_id, limit = 20 } = req.query;
-        let query = `SELECT p.id, p.name, SUM(si.quantity) as total_quantity_sold, SUM(si.line_total) as total_revenue, COUNT(DISTINCT si.sale_id) as sales_count
+        let query = `SELECT p.id, p.name, SUM(si.quantity) as total_quantity_sold,
+            SUM(si.line_total + (si.extra * si.quantity)) as total_revenue,
+            COUNT(DISTINCT si.sale_id) as sales_count
             FROM sale_items si JOIN products p ON si.product_id = p.id JOIN sales s ON si.sale_id = s.id
             WHERE s.payment_status = 'completed'`;
         const params = [];

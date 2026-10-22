@@ -73,8 +73,13 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
                 db.prepare(`INSERT INTO sale_returns (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, line_total, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
                     .run(returnId, sale_id, product_id, sale.warehouse_id, unit_type, quantity, unitPrice, lineTotal, reason || null, req.user.id);
 
+                // Use the conversion that applied when the sale was made. The
+                // product's units_per_carton may have been edited since then.
                 const product = db.prepare('SELECT units_per_carton FROM products WHERE id = ?').get(product_id);
-                const unitsDelta = toUnits(unit_type, quantity, product ? product.units_per_carton : 0);
+                const unitsPerCarton = original.units_per_carton > 0
+                    ? original.units_per_carton
+                    : (product ? product.units_per_carton : 0);
+                const unitsDelta = toUnits(unit_type, quantity, unitsPerCarton);
                 const stockField = stockColumn(unit_type);
                 const restored = db.prepare(`UPDATE product_stock SET ${stockField} = ${stockField} + ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ? AND warehouse_id = ?`).run(unitsDelta, product_id, sale.warehouse_id);
                 if (restored.changes === 0) throw new ClientError(409, 'Product stock row not found for this warehouse');

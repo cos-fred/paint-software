@@ -26,7 +26,7 @@ const ALLOWED_STATUS_TRANSITIONS = {
 
 function restockSale(saleId, warehouseId, userId, referenceType) {
     const items = db.prepare(
-        `SELECT si.product_id, si.unit_type, si.quantity, p.units_per_carton
+        `SELECT si.product_id, si.unit_type, si.quantity, COALESCE(NULLIF(si.units_per_carton, 0), p.units_per_carton, 0) as units_per_carton
          FROM sale_items si JOIN products p ON si.product_id = p.id
          WHERE si.sale_id = ?`
     ).all(saleId);
@@ -93,15 +93,26 @@ router.get('/export', (req, res) => {
             { header: 'Customer', key: 'customer', width: 25 },
             { header: 'Warehouse', key: 'warehouse', width: 20 },
             { header: 'Subtotal (₵)', key: 'subtotal', width: 15 },
+            { header: 'Discount (₵)', key: 'discount', width: 15 },
             { header: 'Markup (₵)', key: 'markup', width: 15 },
             { header: 'Total (₵)', key: 'total', width: 15 },
             { header: 'Payment', key: 'payment_method', width: 15 },
             { header: 'Status', key: 'payment_status', width: 15 }
         ];
-        rows.forEach(s => ws.addRow({ date: new Date(s.sale_date).toLocaleString(), customer: sanitizeCell(s.customer_name || 'Walk-in'), warehouse: sanitizeCell(s.warehouse_name), subtotal: s.subtotal, markup: s.markup, total: s.total, payment_method: s.payment_method, payment_status: s.payment_status }));
+        rows.forEach(s => ws.addRow({
+            date: new Date(s.sale_date).toLocaleString(),
+            customer: sanitizeCell(s.customer_name || 'Walk-in'),
+            warehouse: sanitizeCell(s.warehouse_name),
+            subtotal: s.subtotal,
+            discount: s.discount,
+            markup: s.markup,
+            total: s.total,
+            payment_method: s.payment_method,
+            payment_status: s.payment_status
+        }));
         ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
         ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
-        ['subtotal', 'markup', 'total'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+        ['subtotal', 'discount', 'markup', 'total'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
         const filename = `VEEMENZ-Sales-${new Date().toISOString().split('T')[0]}.xlsx`;
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -151,7 +162,14 @@ router.get('/:id/receipt', (req, res) => {
 });
 
 function generateReceipt(sale, items, settings) {
-    const unitLabels = { unit: 'Unit', carton: 'Carton (12 units)', liter20: '20L Container' };
+    const formatItemType = (item) => {
+        if (item.unit_type === 'carton') {
+            const upc = item.units_per_carton || (items.find(i => i.product_id === item.product_id && i.units_per_carton)?.units_per_carton) || 0;
+            return upc > 0 ? `Carton (${upc} units)` : 'Carton';
+        }
+        if (item.unit_type === 'liter20') return '20L Container';
+        return 'Unit';
+    };
     return {
         receipt_number: sale.id.slice(0, 8).toUpperCase(),
         date: new Date(sale.sale_date).toLocaleDateString(),
@@ -163,7 +181,7 @@ function generateReceipt(sale, items, settings) {
             address: [sale.customer_address, sale.customer_city, sale.customer_state, sale.customer_postal_code, sale.customer_country].filter(Boolean).join(', '),
             tax_id: sale.customer_tax_id
         },
-        items: items.map(i => ({ product_name: i.product_name, unit_type: unitLabels[i.unit_type] || i.unit_type, quantity: i.quantity, unit_price: i.unit_price, extra: i.extra, discount: i.discount, line_total: i.line_total })),
+        items: items.map(i => ({ product_name: i.product_name, unit_type: formatItemType(i), quantity: i.quantity, unit_price: i.unit_price, extra: i.extra, discount: i.discount, line_total: i.line_total })),
         subtotal: sale.subtotal, markup: sale.markup, discount: sale.discount, discount_type: sale.discount_type,
         total: sale.total, payment_method: sale.payment_method, payment_status: sale.payment_status, notes: sale.notes
     };
@@ -235,6 +253,7 @@ router.post('/', (req, res) => {
                 unit_type: item.unit_type,
                 quantity,
                 unit_price: unitPrice,
+                units_per_carton: row.units_per_carton || 0,
                 extra,
                 discount: discountPerItem,
                 line_total: lineTotal,
@@ -270,8 +289,8 @@ router.post('/', (req, res) => {
             for (const item of validatedItems) {
                 const itemId = uuidv4();
                 const stockField = stockColumn(item.unit_type);
-                db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, extra, discount, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                    .run(itemId, saleId, item.product_id, warehouse_id, item.unit_type, item.quantity, item.unit_price, item.extra, item.discount, item.line_total);
+                db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, units_per_carton, extra, discount, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                    .run(itemId, saleId, item.product_id, warehouse_id, item.unit_type, item.quantity, item.unit_price, item.units_per_carton, item.extra, item.discount, item.line_total);
                 const deducted = db.prepare(
                     `UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP
                      WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`
@@ -283,8 +302,26 @@ router.post('/', (req, res) => {
         });
         transaction();
 
+        // Aggregate decrements per product/stock pool so two lines for the same
+        // product are evaluated against the combined movement instead of each
+        // using the same pre-sale stock figure.
+        const lowStockChecks = new Map();
         for (const item of validatedItems) {
-            checkLowStock(item.product_id, warehouse_id, item.unit_type, item.oldStock - item.unitsDelta, item.oldStock);
+            const key = `${item.product_id}:${stockColumn(item.unit_type)}`;
+            const check = lowStockChecks.get(key);
+            if (check) {
+                check.unitsDelta += item.unitsDelta;
+            } else {
+                lowStockChecks.set(key, {
+                    productId: item.product_id,
+                    unitType: item.unit_type,
+                    oldStock: item.oldStock,
+                    unitsDelta: item.unitsDelta
+                });
+            }
+        }
+        for (const check of lowStockChecks.values()) {
+            checkLowStock(check.productId, warehouse_id, check.unitType, check.oldStock - check.unitsDelta, check.oldStock);
         }
 
         logAudit(req.user.id, 'sale.create', 'sale', saleId, { total, payment_method: method });

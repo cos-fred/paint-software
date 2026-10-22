@@ -44,14 +44,63 @@ function migrateSchema() {
     }
 
     const siCols = db.prepare('PRAGMA table_info(sale_items)').all().map((c) => c.name);
+    if (!siCols.includes('units_per_carton')) {
+        db.exec('ALTER TABLE sale_items ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0');
+    }
     if (!siCols.includes('extra')) {
         db.exec('ALTER TABLE sale_items ADD COLUMN extra REAL NOT NULL DEFAULT 0');
     }
+
+    // Backfill rows from before sale items recorded their sale-time conversion.
+    // This is intentionally outside the ALTER branch so it also repairs rows that
+    // were inserted while the column existed but was never written.
+    db.exec(`
+        UPDATE sale_items
+        SET units_per_carton = COALESCE(
+            (SELECT units_per_carton FROM products WHERE products.id = sale_items.product_id), 0)
+        WHERE units_per_carton = 0
+          AND COALESCE((SELECT units_per_carton FROM products WHERE products.id = sale_items.product_id), 0) > 0
+    `);
+
+    // Convert legacy carton counts into the single unit pool exactly once. Setting
+    // carton_stock to 0 is what makes this idempotent: otherwise a product that
+    // later sells down to 0 unit_stock would have its sold stock resurrected on
+    // the next startup. Rows that were already converted by older builds have
+    // unit_stock > 0 and their cartons already folded in, so only clear the stale
+    // carton count.
+    db.exec(`
+        UPDATE product_stock
+        SET unit_stock = CASE
+                WHEN unit_stock = 0 THEN carton_stock * (SELECT units_per_carton FROM products WHERE products.id = product_stock.product_id)
+                ELSE unit_stock
+            END,
+            carton_stock = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE carton_stock > 0
+          AND (SELECT units_per_carton FROM products WHERE products.id = product_stock.product_id) > 0
+    `);
+
+    // Startup warning for any products with carton_stock > 0 but units_per_carton = 0
+    const unmigrated = db.prepare(`
+        SELECT p.id, p.name, ps.carton_stock
+        FROM product_stock ps
+        JOIN products p ON ps.product_id = p.id
+        WHERE ps.unit_stock = 0 AND ps.carton_stock > 0 AND p.units_per_carton <= 0 AND p.is_active = 1
+    `).all();
+    if (unmigrated.length > 0) {
+        for (const item of unmigrated) {
+            console.warn(`[warn] Product "${item.name}" (id: ${item.id}) has ${item.carton_stock} legacy cartons but units_per_carton is 0. Please edit product to set units per carton.`);
+        }
+    }
+
+    // Tax handling was removed in favour of per-item markup. Drop the stale
+    // settings so they are not exposed or written again.
+    db.prepare("DELETE FROM settings WHERE key IN ('tax_rate', 'tax_enabled')").run();
 }
 
 // Existing databases store only 'carton'/'liter20' unit types; the single-pool
 // model introduces 'unit'. Recreate the unit_type CHECK constraints so 'unit'
-// is accepted, preserving all existing rows and foreign keys.
+// is accepted, preserving all existing rows and foreign keys with explicit column mappings.
 function migrateUnitTypeCheck() {
     const tables = [
         { name: 'sale_items', sql: `CREATE TABLE sale_items (
@@ -62,6 +111,7 @@ function migrateUnitTypeCheck() {
             unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            units_per_carton INTEGER NOT NULL DEFAULT 0 CHECK (units_per_carton >= 0),
             extra REAL NOT NULL DEFAULT 0 CHECK (extra >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             line_total REAL NOT NULL CHECK (line_total >= 0),
@@ -122,7 +172,7 @@ function migrateUnitTypeCheck() {
 
     const needs = tables.filter((t) => {
         const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(t.name);
-        return row && row.sql && !row.sql.includes("'unit'");
+        return row && row.sql && (!row.sql.includes("'unit'") || (t.name === 'sale_items' && !row.sql.includes('units_per_carton')));
     });
     if (needs.length === 0) return;
 
@@ -132,7 +182,26 @@ function migrateUnitTypeCheck() {
             for (const t of needs) {
                 db.exec(`ALTER TABLE ${t.name} RENAME TO ${t.name}_old`);
                 db.exec(t.sql);
-                db.exec(`INSERT INTO ${t.name} SELECT * FROM ${t.name}_old`);
+                const oldCols = db.prepare(`PRAGMA table_info(${t.name}_old)`).all().map((c) => c.name);
+                const newCols = db.prepare(`PRAGMA table_info(${t.name})`).all().map((c) => c.name);
+                const targetCols = [];
+                const selectExprs = [];
+                for (const col of newCols) {
+                    if (oldCols.includes(col)) {
+                        targetCols.push(col);
+                        selectExprs.push(col);
+                    } else if (col === 'extra') {
+                        targetCols.push(col);
+                        selectExprs.push('0 AS extra');
+                    } else if (col === 'discount') {
+                        targetCols.push(col);
+                        selectExprs.push('0 AS discount');
+                    } else if (col === 'units_per_carton') {
+                        targetCols.push(col);
+                        selectExprs.push(`COALESCE((SELECT units_per_carton FROM products WHERE products.id = ${t.name}_old.product_id), 0) AS units_per_carton`);
+                    }
+                }
+                db.exec(`INSERT INTO ${t.name} (${targetCols.join(', ')}) SELECT ${selectExprs.join(', ')} FROM ${t.name}_old`);
                 db.exec(`DROP TABLE ${t.name}_old`);
             }
             db.exec(`
@@ -142,6 +211,13 @@ function migrateUnitTypeCheck() {
                 CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id);
                 CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements(created_at);
             `);
+
+            // Validate before the transaction commits so a failed migration is
+            // rolled back instead of leaving the database migrated but unusable.
+            const fkErrors = db.prepare('PRAGMA foreign_key_check').all();
+            if (fkErrors.length > 0) {
+                throw new Error('Foreign key constraint violation after migration: ' + JSON.stringify(fkErrors));
+            }
         });
         run();
     } finally {
@@ -255,6 +331,7 @@ function initializeDatabase() {
             unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            units_per_carton INTEGER NOT NULL DEFAULT 0 CHECK (units_per_carton >= 0),
             extra REAL NOT NULL DEFAULT 0 CHECK (extra >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             line_total REAL NOT NULL CHECK (line_total >= 0),
@@ -390,8 +467,6 @@ function insertDefaultSettings() {
         { key: 'company_address', value: '123 Industrial Ave, Accra, Ghana', description: 'Company address for receipts' },
         { key: 'company_phone', value: '+233-XX-XXX-XXXX', description: 'Company phone for receipts' },
         { key: 'company_email', value: 'info@veemenz.com', description: 'Company email for receipts' },
-        { key: 'tax_rate', value: '0.10', description: 'Tax rate applied to sales (0.10 = 10%)' },
-        { key: 'tax_enabled', value: 'true', description: 'Whether tax is applied to sales' },
         { key: 'show_total_value', value: 'true', description: 'Show total inventory value (admin only)' },
         { key: 'currency', value: 'GHS', description: 'Currency code' },
         { key: 'low_stock_threshold_default', value: '10', description: 'Default low stock threshold' },

@@ -403,4 +403,31 @@ describe('API security', { concurrency: 1 }, () => {
         });
         assert.equal(again.status, 404);
     });
+
+    it('validates setting values and rejects unknown keys', async () => {
+        const unknown = await request(server, {
+            method: 'PUT',
+            path: '/api/settings/evil_key',
+            token: adminToken,
+            body: { value: 'x' }
+        });
+        assert.equal(unknown.status, 400, JSON.stringify(unknown.body));
+
+        const injected = await request(server, {
+            method: 'PUT',
+            path: '/api/settings/currency',
+            token: adminToken,
+            body: { value: 'GHS<script>' }
+        });
+        assert.equal(injected.status, 400, JSON.stringify(injected.body));
+
+        const lower = await request(server, {
+            method: 'PUT',
+            path: '/api/settings/currency',
+            token: adminToken,
+            body: { value: 'usd' }
+        });
+        assert.equal(lower.status, 200, JSON.stringify(lower.body));
+        assert.equal(lower.body.value, 'USD');
+    });
 });

@@ -9,13 +9,27 @@ router.use(authenticateToken);
 
 const SENSITIVE_KEYS = ['notifications_webhook_url'];
 
+// Only known settings may be written, and each value is validated before it is
+// persisted. This keeps values such as `currency` safe to render in the UI.
+const SETTING_VALIDATORS = {
+    company_name: (v) => typeof v === 'string' && v.length > 0 && v.length <= 120,
+    company_address: (v) => typeof v === 'string' && v.length <= 300,
+    company_phone: (v) => typeof v === 'string' && v.length <= 40,
+    company_email: (v) => v === '' || (typeof v === 'string' && v.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)),
+    show_total_value: (v) => v === 'true' || v === 'false',
+    currency: (v) => typeof v === 'string' && /^[A-Z]{3}$/.test(v),
+    low_stock_threshold_default: (v) => /^\d+$/.test(v) && Number(v) <= 1000000,
+    notifications_enabled: (v) => v === 'true' || v === 'false',
+    notifications_webhook_url: (v) => v === '' || (typeof v === 'string' && v.length <= 500 && /^https?:\/\/\S+$/i.test(v))
+};
+
 function filterForUser(rows, user) {
     if (user.role === 'admin') return rows;
     return rows.filter((r) => !SENSITIVE_KEYS.includes(r.key));
 }
 
-// Readable by all authenticated users so company info and tax settings
-// apply consistently across the app. Writes remain admin-only.
+// Readable by all authenticated users so company info and preferences apply
+// consistently across the app. Writes remain admin-only.
 router.get('/', (req, res) => {
     try {
         const rows = db.prepare('SELECT * FROM settings ORDER BY key').all();
@@ -45,13 +59,29 @@ router.put('/:key', requireAdmin, (req, res) => {
         if (value === undefined) {
             return res.status(400).json({ error: 'Value is required' });
         }
+        if (description !== undefined && (typeof description !== 'string' || description.length > 300)) {
+            return res.status(400).json({ error: 'Invalid description' });
+        }
+
+        const key = req.params.key;
+        const validator = Object.prototype.hasOwnProperty.call(SETTING_VALIDATORS, key)
+            ? SETTING_VALIDATORS[key]
+            : null;
+        if (!validator) {
+            return res.status(400).json({ error: 'Unknown setting' });
+        }
+        let normalized = String(value);
+        if (key === 'currency') normalized = normalized.toUpperCase();
+        if (!validator(normalized)) {
+            return res.status(400).json({ error: `Invalid value for ${req.params.key}` });
+        }
 
         db.prepare(
             `INSERT INTO settings (key, value, description) VALUES (?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET value = ?, description = COALESCE(?, description)`
-        ).run(req.params.key, value, description, value, description);
+        ).run(req.params.key, normalized, description, normalized, description);
 
-        res.json({ message: 'Setting saved', key: req.params.key, value });
+        res.json({ message: 'Setting saved', key: req.params.key, value: normalized });
     } catch (err) {
         console.error(err); res.status(500).json({ error: 'Something went wrong' });
     }
@@ -59,7 +89,7 @@ router.put('/:key', requireAdmin, (req, res) => {
 
 router.delete('/:key', requireAdmin, (req, res) => {
     try {
-        const protectedKeys = ['company_name', 'company_address', 'tax_rate', 'currency'];
+        const protectedKeys = ['company_name', 'company_address', 'currency'];
         if (protectedKeys.includes(req.params.key)) {
             return res.status(400).json({ error: 'Cannot delete protected setting' });
         }

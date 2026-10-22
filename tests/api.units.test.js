@@ -26,7 +26,6 @@ describe('Carton + unit single-pool inventory', { concurrency: 1 }, () => {
         const login = await request(server, { method: 'POST', path: '/api/auth/login', body: { username: 'admin', password: 'UnitsAdminPass12' } });
         token = login.body.token;
         warehouseId = (await request(server, { path: '/api/warehouses', token })).body[0].id;
-        await request(server, { method: 'PUT', path: '/api/settings/tax_enabled', token, body: { value: 'false' } });
     });
 
     after(async () => {
@@ -86,6 +85,51 @@ describe('Carton + unit single-pool inventory', { concurrency: 1 }, () => {
         assert.equal(ret.status, 201, JSON.stringify(ret.body));
         const after = getDb().prepare('SELECT unit_stock FROM product_stock WHERE product_id=? AND warehouse_id=?').get(pid, warehouseId).unit_stock;
         assert.equal(after, before + 12);
+    });
+
+    it('records the sale-time units-per-carton and prints the real carton size', async () => {
+        const prod = await request(server, { method: 'POST', path: '/api/products', token, body: { name: 'Six Pack', unit_price: 10, units_per_carton: 6, warehouse_id: warehouseId, cartons: 10 } });
+        const pid = prod.body.id;
+        const sale = await request(server, { method: 'POST', path: '/api/sales', token, body: { warehouse_id: warehouseId, payment_method: 'cash', items: [{ product_id: pid, unit_type: 'carton', quantity: 1 }] } });
+        assert.equal(sale.status, 201, JSON.stringify(sale.body));
+
+        const item = getDb().prepare('SELECT units_per_carton FROM sale_items WHERE sale_id = ?').get(sale.body.id);
+        assert.equal(item.units_per_carton, 6);
+
+        const receipt = await request(server, { path: `/api/sales/${sale.body.id}/receipt`, token });
+        assert.equal(receipt.status, 200, JSON.stringify(receipt.body));
+        assert.equal(receipt.body.items[0].unit_type, 'Carton (6 units)');
+    });
+
+    it('returns use the units-per-carton that applied when the sale was made', async () => {
+        const prod = await request(server, { method: 'POST', path: '/api/products', token, body: { name: 'Return Six Pack', unit_price: 10, units_per_carton: 6, warehouse_id: warehouseId, cartons: 10 } });
+        const pid = prod.body.id;
+        const sale = await request(server, { method: 'POST', path: '/api/sales', token, body: { warehouse_id: warehouseId, payment_method: 'cash', items: [{ product_id: pid, unit_type: 'carton', quantity: 1 }] } });
+        assert.equal(sale.status, 201, JSON.stringify(sale.body));
+
+        const put = await request(server, { method: 'PUT', path: `/api/products/${pid}`, token, body: { units_per_carton: 10 } });
+        assert.equal(put.status, 200, JSON.stringify(put.body));
+
+        const before = getDb().prepare('SELECT unit_stock FROM product_stock WHERE product_id=? AND warehouse_id=?').get(pid, warehouseId).unit_stock;
+        const ret = await request(server, { method: 'POST', path: '/api/returns', token, body: { sale_id: sale.body.id, items: [{ product_id: pid, unit_type: 'carton', quantity: 1 }] } });
+        assert.equal(ret.status, 201, JSON.stringify(ret.body));
+        const after = getDb().prepare('SELECT unit_stock FROM product_stock WHERE product_id=? AND warehouse_id=?').get(pid, warehouseId).unit_stock;
+        assert.equal(after, before + 6);
+    });
+
+    it('cancelling a sale restores the sale-time carton size after an edit', async () => {
+        const prod = await request(server, { method: 'POST', path: '/api/products', token, body: { name: 'Cancel Six Pack', unit_price: 10, units_per_carton: 6, warehouse_id: warehouseId, cartons: 10 } });
+        const pid = prod.body.id;
+        const sale = await request(server, { method: 'POST', path: '/api/sales', token, body: { warehouse_id: warehouseId, payment_method: 'cash', items: [{ product_id: pid, unit_type: 'carton', quantity: 1 }] } });
+        assert.equal(sale.status, 201, JSON.stringify(sale.body));
+
+        const put = await request(server, { method: 'PUT', path: `/api/products/${pid}`, token, body: { units_per_carton: 10 } });
+        assert.equal(put.status, 200, JSON.stringify(put.body));
+
+        const cancel = await request(server, { method: 'DELETE', path: `/api/sales/${sale.body.id}`, token });
+        assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+        const stock = getDb().prepare('SELECT unit_stock FROM product_stock WHERE product_id=? AND warehouse_id=?').get(pid, warehouseId).unit_stock;
+        assert.equal(stock, 60);
     });
 
     it('converts legacy carton stock to total units when units-per-carton is set', async () => {

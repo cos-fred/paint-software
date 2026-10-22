@@ -48,7 +48,8 @@ function createApp() {
             directives: {
                 defaultSrc: ["'self'"],
                 scriptSrc: ["'self'"],
-                styleSrc: ["'self'", "'unsafe-inline'"],
+                styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+                fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
                 imgSrc: ["'self'", "data:"],
                 connectSrc: ["'self'", "ws:", "wss:"],
                 objectSrc: ["'none'"],
@@ -83,6 +84,11 @@ function createApp() {
     app.use('/api/audit', auditRoutes);
     app.use('/api/warehouses', warehouseRoutes);
     app.use('/api/system', systemRoutes);
+
+    // Shared stock helpers used by both the server and the browser UI.
+    app.get('/stock.js', (req, res) => {
+        res.sendFile(path.join(__dirname, 'lib', 'stock.js'));
+    });
 
     app.use(express.static(path.join(__dirname, 'public')));
 
@@ -136,7 +142,28 @@ function startServer() {
 }
 
 if (require.main === module) {
-    startServer();
+    const server = startServer();
+    if (server) {
+        let shuttingDown = false;
+        const shutdown = (signal) => {
+            if (shuttingDown) return;
+            shuttingDown = true;
+            console.log(`[shutdown] received ${signal}, closing server`);
+            const forceExit = setTimeout(() => process.exit(1), 5000);
+            forceExit.unref();
+            server.close(() => {
+                try {
+                    require('./database').getDb().close();
+                } catch (err) {
+                    console.error('[shutdown] failed to close database:', err);
+                }
+                clearTimeout(forceExit);
+                process.exit(0);
+            });
+        };
+        process.on('SIGINT', () => shutdown('SIGINT'));
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+    }
 }
 
 module.exports = { createApp, startServer };

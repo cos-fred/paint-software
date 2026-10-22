@@ -1,8 +1,23 @@
-const { describe, it } = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'paint-lowstock-'));
+process.env.NODE_ENV = 'test';
+process.env.DB_PATH = path.join(tmpDir, 'test.db');
+process.env.JWT_SECRET = 'l'.repeat(48);
+process.env.ADMIN_PASSWORD = 'LowStockAdminPass12';
+
+const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
-const { getProductStockStatus, splitUnits } = require('../lib/stock');
+const { getProductStockStatus, splitUnits, toUnits } = require('../lib/stock');
+const { initializeDatabase, getDb } = require('../database');
 
 describe('Low stock detection for cartons and 20L containers', () => {
+    before(() => {
+        initializeDatabase();
+    });
+
     const product = {
         name: 'SG 201 UNDERCOAT',
         units_per_carton: 12,
@@ -72,8 +87,13 @@ describe('Low stock detection for cartons and 20L containers', () => {
         assert.equal(status.lowStockLabel, 'Low on Units');
     });
 
+    it('refuses carton conversions when units-per-carton is not configured', () => {
+        assert.throws(() => toUnits('carton', 1, 0), /Units per carton/);
+        assert.equal(toUnits('carton', 2, 12), 24);
+        assert.equal(toUnits('unit', 5, 12), 5);
+    });
+
     it('creates an alert only when crossing below threshold, and re-alerts after restocking and falling again', () => {
-        const { getDb } = require('../database');
         const db = getDb();
         const { checkLowStock } = require('../services/low-stock');
         const { v4: uuidv4 } = require('uuid');
