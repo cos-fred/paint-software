@@ -16,3 +16,5 @@ playwright-report
 tests
 *.db.enc
 *.partial
+
+migration-backups/

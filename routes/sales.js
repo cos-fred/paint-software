@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
 const { logAudit } = require('../services/audit');
-const { checkLowStock } = require('../services/low-stock');
+const { publishStockChanges } = require('../services/low-stock');
 const {
     stockColumn,
     priceColumn,
@@ -40,7 +40,8 @@ function restockSale(
     warehouseId,
     userId,
     referenceType,
-    kind = 'refund'
+    kind = 'refund',
+    stockChanges
 ) {
     for (const item of returnableItems(saleId)) {
         if (item.remaining_quantity > 0)
@@ -49,7 +50,8 @@ function restockSale(
                 item.remaining_quantity,
                 userId,
                 kind === 'cancellation' ? 'Sale cancelled' : 'Sale refunded',
-                kind
+                kind,
+                stockChanges
             );
     }
 }
@@ -245,7 +247,9 @@ function generateReceipt(sale, items, settings) {
                         i.product_id === item.product_id && i.units_per_carton
                 )?.units_per_carton ||
                 0;
-            return upc > 0 ? `Carton (${upc} units)` : 'Carton';
+            return upc > 0
+                ? `Carton (${upc} units)`
+                : 'Carton (size not recorded)';
         }
         if (item.unit_type === 'liter20') return '20L Container';
         return 'Unit';
@@ -324,6 +328,7 @@ function applyStatusChange(saleId, nextStatus, userId) {
         throw new ClientError(400, 'Invalid payment status transition');
     }
 
+    const stockChanges = new Map();
     const shouldRestock =
         nextStatus === 'cancelled' || nextStatus === 'refunded';
     const transaction = db.transaction(() => {
@@ -340,10 +345,12 @@ function applyStatusChange(saleId, nextStatus, userId) {
                 sale.warehouse_id,
                 userId,
                 'sale_return',
-                nextStatus === 'cancelled' ? 'cancellation' : 'refund'
+                nextStatus === 'cancelled' ? 'cancellation' : 'refund',
+                stockChanges
             );
     });
     transaction();
+    publishStockChanges(stockChanges);
     return sale;
 }
 

@@ -81,60 +81,6 @@ function migrateSchema() {
             'ALTER TABLE sale_items ADD COLUMN extra REAL NOT NULL DEFAULT 0'
         );
     }
-
-    // Backfill rows from before sale items recorded their sale-time conversion.
-    // This is intentionally outside the ALTER branch so it also repairs rows that
-    // were inserted while the column existed but was never written.
-    db.exec(`
-        UPDATE sale_items
-        SET units_per_carton = COALESCE(
-            (SELECT units_per_carton FROM products WHERE products.id = sale_items.product_id), 0)
-        WHERE units_per_carton = 0
-          AND COALESCE((SELECT units_per_carton FROM products WHERE products.id = sale_items.product_id), 0) > 0
-    `);
-
-    // Convert legacy carton counts into the single unit pool exactly once. Setting
-    // carton_stock to 0 is what makes this idempotent: otherwise a product that
-    // later sells down to 0 unit_stock would have its sold stock resurrected on
-    // the next startup. Rows that were already converted by older builds have
-    // unit_stock > 0 and their cartons already folded in, so only clear the stale
-    // carton count.
-    db.exec(`
-        UPDATE product_stock
-        SET unit_stock = CASE
-                WHEN unit_stock = 0 THEN carton_stock * (SELECT units_per_carton FROM products WHERE products.id = product_stock.product_id)
-                ELSE unit_stock
-            END,
-            carton_stock = 0,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE carton_stock > 0
-          AND (SELECT units_per_carton FROM products WHERE products.id = product_stock.product_id) > 0
-    `);
-
-    // Startup warning for any products with carton_stock > 0 but units_per_carton = 0
-    const unmigrated = db
-        .prepare(
-            `
-        SELECT p.id, p.name, ps.carton_stock
-        FROM product_stock ps
-        JOIN products p ON ps.product_id = p.id
-        WHERE ps.unit_stock = 0 AND ps.carton_stock > 0 AND p.units_per_carton <= 0 AND p.is_active = 1
-    `
-        )
-        .all();
-    if (unmigrated.length > 0) {
-        for (const item of unmigrated) {
-            console.warn(
-                `[warn] Product "${item.name}" (id: ${item.id}) has ${item.carton_stock} legacy cartons but units_per_carton is 0. Please edit product to set units per carton.`
-            );
-        }
-    }
-
-    // Tax handling was removed in favour of per-item markup. Drop the stale
-    // settings so they are not exposed or written again.
-    db.prepare(
-        "DELETE FROM settings WHERE key IN ('tax_rate', 'tax_enabled')"
-    ).run();
 }
 
 // Existing databases store only 'carton'/'liter20' unit types; the single-pool
@@ -300,6 +246,11 @@ function migrateUnitTypeCheck() {
 }
 
 function initializeDatabase() {
+    const {
+        snapshotBeforeUpgrade,
+        runUpgradeSafeguards
+    } = require('./lib/upgrade-safeguards');
+    const migrationBackup = snapshotBeforeUpgrade(db, dbPath);
     db.exec('PRAGMA foreign_keys = ON');
 
     db.exec(`
@@ -381,7 +332,6 @@ function initializeDatabase() {
             warehouse_id TEXT NOT NULL,
             sale_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             subtotal REAL NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
-            tax REAL NOT NULL DEFAULT 0 CHECK (tax >= 0),
             markup REAL NOT NULL DEFAULT 0 CHECK (markup >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             discount_type TEXT NOT NULL DEFAULT 'amount' CHECK (discount_type IN ('amount', 'percent')),
@@ -518,6 +468,7 @@ function initializeDatabase() {
     migrateSchema();
     migrateUnitTypeCheck();
     require('./lib/migrations').runLaunchMigrations(db);
+    runUpgradeSafeguards(db, migrationBackup);
 
     const warehouseCount = db
         .prepare('SELECT COUNT(*) as count FROM warehouses')

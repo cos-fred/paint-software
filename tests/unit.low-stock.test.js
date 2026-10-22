@@ -100,34 +100,50 @@ describe('Low stock detection for cartons and 20L containers', () => {
 
         const testProdId = uuidv4();
         const testWhId = uuidv4();
-        db.prepare("INSERT INTO warehouses (id, name, code) VALUES (?, 'Test Alert WH', ?)").run(testWhId, 'TWH-' + Date.now().toString(36));
-        db.prepare("INSERT INTO products (id, name, unit_price, units_per_carton, low_stock_threshold) VALUES (?, 'Alert Lifecycle Paint', 50, 10, 3)").run(testProdId);
+        db.prepare(
+            "INSERT INTO warehouses (id, name, code) VALUES (?, 'Test Alert WH', ?)"
+        ).run(testWhId, 'TWH-' + Date.now().toString(36));
+        db.prepare(
+            "INSERT INTO products (id, name, unit_price, units_per_carton, low_stock_threshold) VALUES (?, 'Alert Lifecycle Paint', 50, 10, 3)"
+        ).run(testProdId);
 
         // 1. Stock drops from 5 cartons (50 units) to 2 cartons (20 units) -> crosses below threshold of 3
         checkLowStock(testProdId, testWhId, 'carton', 20, 50);
-        const alerts1 = db.prepare('SELECT * FROM alerts WHERE product_id = ?').all(testProdId);
+        const alerts1 = db
+            .prepare('SELECT * FROM alerts WHERE product_id = ?')
+            .all(testProdId);
         assert.equal(alerts1.length, 1);
         assert.equal(alerts1[0].is_read, 0);
         assert.match(alerts1[0].message, /has 2 cartons remaining/);
 
         // 2. Mark alert as read
-        db.prepare('UPDATE alerts SET is_read = 1 WHERE id = ?').run(alerts1[0].id);
+        db.prepare('UPDATE alerts SET is_read = 1 WHERE id = ?').run(
+            alerts1[0].id
+        );
 
         // 3. Stock drops further while already low (from 2 cartons to 1 carton) -> should NOT create duplicate alert
         checkLowStock(testProdId, testWhId, 'carton', 10, 20);
-        const alerts2 = db.prepare('SELECT * FROM alerts WHERE product_id = ?').all(testProdId);
+        const alerts2 = db
+            .prepare('SELECT * FROM alerts WHERE product_id = ?')
+            .all(testProdId);
         assert.equal(alerts2.length, 1); // still only 1 alert
 
-        // 4. Product is restocked above threshold (from 1 carton to 5 cartons) -> no alert
+        // 4. Recovery creates an informational event and resolves old warnings.
         checkLowStock(testProdId, testWhId, 'carton', 50, 10);
-        const alerts3 = db.prepare('SELECT * FROM alerts WHERE product_id = ?').all(testProdId);
-        assert.equal(alerts3.length, 1);
+        const alerts3 = db
+            .prepare('SELECT * FROM alerts WHERE product_id = ?')
+            .all(testProdId);
+        assert.equal(alerts3.length, 2);
+        assert.match(alerts3[1].message, /Stock recovered/);
+        assert.equal(alerts3[1].severity, 'info');
 
         // 5. Stock falls below threshold again (from 5 cartons to 2 cartons) -> should alert AGAIN
         checkLowStock(testProdId, testWhId, 'carton', 20, 50);
-        const alerts4 = db.prepare('SELECT * FROM alerts WHERE product_id = ?').all(testProdId);
-        assert.equal(alerts4.length, 2);
-        assert.equal(alerts4[1].is_read, 0);
+        const alerts4 = db
+            .prepare('SELECT * FROM alerts WHERE product_id = ?')
+            .all(testProdId);
+        assert.equal(alerts4.length, 3);
+        assert.equal(alerts4[2].is_read, 0);
 
         // Cleanup
         db.prepare('DELETE FROM alerts WHERE product_id = ?').run(testProdId);

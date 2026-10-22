@@ -21,7 +21,6 @@ ENV DB_PATH=/data/paint_inventory.db
 ENV BACKUP_DIR=/data/backups
 ENV TRUST_PROXY=1
 ENV WEB_CONCURRENCY=1
-ENV WEB_CONCURRENCY=1
 
 USER node
 

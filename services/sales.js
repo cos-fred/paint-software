@@ -124,8 +124,8 @@ function createSale(req) {
         const total = money.sum([subtotal - discount, markup]);
         const saleId = randomUUID();
         db.prepare(
-            `INSERT INTO sales(id,customer_id,warehouse_id,subtotal,tax,markup,discount,discount_type,total,payment_method,payment_status,notes,created_by)
-            VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?)`
+            `INSERT INTO sales(id,customer_id,warehouse_id,subtotal,markup,discount,discount_type,total,payment_method,payment_status,notes,created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
             saleId,
             customer_id || null,

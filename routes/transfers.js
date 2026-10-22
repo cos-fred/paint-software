@@ -57,18 +57,14 @@ router.post('/', requirePermission('manage_transfers'), (req, res) => {
             !unit_type ||
             !quantity
         ) {
-            return res
-                .status(400)
-                .json({
-                    error: 'Product, warehouses, unit type, and quantity are required'
-                });
+            return res.status(400).json({
+                error: 'Product, warehouses, unit type, and quantity are required'
+            });
         }
         if (from_warehouse_id === to_warehouse_id) {
-            return res
-                .status(400)
-                .json({
-                    error: 'Source and destination warehouses must be different'
-                });
+            return res.status(400).json({
+                error: 'Source and destination warehouses must be different'
+            });
         }
         if (!UNIT_TYPES.includes(unit_type))
             return res.status(400).json({ error: 'Invalid unit type' });
@@ -114,6 +110,11 @@ router.post('/', requirePermission('manage_transfers'), (req, res) => {
                 .status(400)
                 .json({ error: 'Insufficient stock in source warehouse' });
 
+        const destinationBefore = db
+            .prepare(
+                `SELECT ${stockField} AS stock FROM product_stock WHERE product_id=? AND warehouse_id=?`
+            )
+            .get(product_id, to_warehouse_id);
         const transferId = uuidv4();
         const transaction = db.transaction(() => {
             const deducted = db
@@ -181,6 +182,14 @@ router.post('/', requirePermission('manage_transfers'), (req, res) => {
             unit_type,
             source.stock - unitsDelta,
             source.stock
+        );
+
+        checkLowStock(
+            product_id,
+            to_warehouse_id,
+            unit_type,
+            (destinationBefore?.stock || 0) + unitsDelta,
+            destinationBefore?.stock || 0
         );
 
         logAudit(req.user.id, 'stock.transfer', 'product', product_id, {

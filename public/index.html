@@ -1168,8 +1168,11 @@
     <div id="toast-container" class="toast-container"></div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/stock.js"></script>
-    <script src="app.js"></script>
-    <script src="launch-controls.js"></script>
+    <div id="startup-error" class="login-container" role="alert" hidden>
+        <h1>Unable to load the application</h1>
+        <p>A required file could not be loaded. Check your connection and try again.</p>
+        <button id="startup-retry" class="btn btn-primary" type="button">Try again</button>
+    </div>
+    <script src="/bootstrap.js"></script>
 </body>
 </html>

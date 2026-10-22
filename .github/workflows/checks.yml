@@ -10,6 +10,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Verify SQLite native binding
+        run: node -e "const db = new (require('better-sqlite3'))(':memory:'); db.prepare('SELECT 1').get(); db.close()"
       - run: npm audit --omit=dev
       - run: npm test
       - run: npx playwright install --with-deps chromium

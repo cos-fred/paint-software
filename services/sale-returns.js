@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { getDb } = require('../database');
 const { stockColumn, toUnits } = require('../lib/stock');
+const { recordStockChange } = require('./low-stock');
 const { ClientError } = require('../lib/errors');
 const { cumulativeCredit, amount } = require('../lib/money');
 
@@ -20,7 +21,14 @@ function returnableItems(saleId) {
 }
 
 // Must be called inside the caller's transaction. All reversals use this path.
-function creditItem(item, quantity, userId, reason, kind = 'return') {
+function creditItem(
+    item,
+    quantity,
+    userId,
+    reason,
+    kind = 'return',
+    stockChanges
+) {
     if (quantity <= 0 || quantity > item.remaining_quantity)
         throw new ClientError(
             400,
@@ -54,6 +62,11 @@ function creditItem(item, quantity, userId, reason, kind = 'return') {
     );
     const units = toUnits(item.unit_type, quantity, item.units_per_carton);
     const column = stockColumn(item.unit_type);
+    const before = db
+        .prepare(
+            `SELECT ${column} AS stock FROM product_stock WHERE product_id=? AND warehouse_id=?`
+        )
+        .get(item.product_id, item.warehouse_id);
     const restored = db
         .prepare(
             `UPDATE product_stock SET ${column}=${column}+?,updated_at=CURRENT_TIMESTAMP WHERE product_id=? AND warehouse_id=?`
@@ -63,6 +76,15 @@ function creditItem(item, quantity, userId, reason, kind = 'return') {
         throw new ClientError(
             409,
             'Product stock row not found for this warehouse'
+        );
+    if (stockChanges)
+        recordStockChange(
+            stockChanges,
+            item.product_id,
+            item.warehouse_id,
+            item.unit_type,
+            before.stock,
+            before.stock + units
         );
     db.prepare(
         `INSERT INTO stock_movements (id,product_id,warehouse_id,movement_type,unit_type,quantity,reference_id,reference_type,notes,created_by)

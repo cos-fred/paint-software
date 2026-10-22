@@ -3,6 +3,7 @@ const { getDb } = require('../database');
 const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { returnableItems, creditItem } = require('../services/sale-returns');
+const { publishStockChanges } = require('../services/low-stock');
 const { executeOnce } = require('../services/idempotency');
 const { ClientError, sendSafeError } = require('../lib/errors');
 const {
@@ -46,6 +47,7 @@ router.get('/', (req, res) => {
 
 router.post('/', requirePermission('manage_returns'), (req, res) => {
     try {
+        const stockChanges = new Map();
         const result = executeOnce(req, 'sale.return', () => {
             const { sale_id, items, reason } = req.body;
             if (!Array.isArray(items) || !items.length || items.length > 200)
@@ -103,7 +105,9 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
                             line,
                             quantity,
                             req.user.id,
-                            reason
+                            reason,
+                            'return',
+                            stockChanges
                         );
                     remaining -= quantity;
                     if (!remaining) break;
@@ -118,6 +122,7 @@ router.post('/', requirePermission('manage_returns'), (req, res) => {
                 credit_amount: credit / 100
             };
         });
+        if (!result.replay) publishStockChanges(stockChanges);
         res.status(result.replay ? 200 : 201).json(result.body);
     } catch (err) {
         sendSafeError(res, err, '[returns]');

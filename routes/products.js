@@ -462,6 +462,12 @@ router.put('/:id', requirePermission('manage_products'), (req, res) => {
                 for (const row of legacy) {
                     convert.run(row.carton_stock * newUnitsPerCarton, row.id);
                 }
+                db.prepare(
+                    'UPDATE sale_items SET units_per_carton=? WHERE product_id=? AND units_per_carton=0'
+                ).run(newUnitsPerCarton, req.params.id);
+                db.prepare(
+                    "UPDATE alerts SET is_read=1 WHERE product_id=? AND type='system' AND message LIKE 'Inventory review required:%'"
+                ).run(req.params.id);
             }
         });
         transaction();
@@ -522,11 +528,9 @@ router.post(
                 quantity === undefined ||
                 !warehouse_id
             )
-                return res
-                    .status(400)
-                    .json({
-                        error: 'Movement type, unit type, quantity, and warehouse are required'
-                    });
+                return res.status(400).json({
+                    error: 'Movement type, unit type, quantity, and warehouse are required'
+                });
             if (!UNIT_TYPES.includes(unit_type))
                 return res.status(400).json({ error: 'Invalid unit type' });
             const qty = parsePositiveInteger(quantity, 'Quantity');
@@ -564,11 +568,9 @@ router.post(
                 )
                 .get(productId, warehouse_id);
             if (!row)
-                return res
-                    .status(404)
-                    .json({
-                        error: 'Product stock not found for this warehouse'
-                    });
+                return res.status(404).json({
+                    error: 'Product stock not found for this warehouse'
+                });
 
             const currentStock = row.current_stock;
             if (!Number.isSafeInteger(currentStock + unitsDelta))
@@ -588,11 +590,9 @@ router.post(
             ) {
                 newStock = currentStock - unitsDelta;
                 if (newStock < 0)
-                    return res
-                        .status(400)
-                        .json({
-                            error: 'Insufficient stock in this warehouse'
-                        });
+                    return res.status(400).json({
+                        error: 'Insufficient stock in this warehouse'
+                    });
             } else
                 return res.status(400).json({ error: 'Invalid movement type' });
 

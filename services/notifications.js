@@ -17,7 +17,8 @@ async function notifyLowStock({
     warehouseName,
     unitType,
     current,
-    threshold
+    threshold,
+    recovered = false
 }) {
     if (!isEnabled()) return false;
     const url = setting('notifications_webhook_url');
@@ -25,7 +26,8 @@ async function notifyLowStock({
     try {
         await publicRequest(url, {
             body: JSON.stringify({
-                text: `Low stock: ${productName} (${warehouseName}) has ${current} ${unitType} left (threshold: ${threshold})`,
+                text: `${recovered ? 'Stock recovered' : 'Low stock'}: ${productName} (${warehouseName}) has ${current} ${unitType} left (threshold: ${threshold})`,
+                event: recovered ? 'stock_recovered' : 'low_stock',
                 product_name: productName,
                 warehouse: warehouseName,
                 unit_type: unitType,

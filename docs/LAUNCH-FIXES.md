@@ -40,12 +40,23 @@ Implemented locally; hosting and production configuration remain deferred.
 
 - Clean locked dependency installation on Node 24.22.1.
 - npm audit: zero reported vulnerabilities after dependency updates.
-- 88 passing unit/API/startup/migration/backup/session tests.
-- 10 passing Microsoft Edge browser tests, including transfer creation, warehouse filtering, settings errors, permission flows, record pagination, uncertain-request recovery, phone layout and the actual receipt print window.
+- 98 passing unit/API/startup/migration/backup/session tests.
+- 14 passing Microsoft Edge browser tests, including transfer creation, warehouse filtering, settings errors, permission flows, record pagination, uncertain-request recovery, phone layout and the actual receipt print window.
 - Five different users competing for three remaining units result in three successful sales and two clean rejections.
 - Five concurrent retries of one sale create one sale and deduct stock once.
 - A production-mode test records a sale, creates a verified backup, restarts the server and confirms the stock and sale remain.
-- A read-only snapshot of the existing test database migrates successfully, preserves its 11 sales, passes integrity/foreign-key checks and reconciles all sale-line allocations. The original database was not migrated or reset during these checks.
+- A read-only snapshot of the existing test database migrates successfully, preserves its 11 sales, passes integrity/foreign-key checks and reconciles all sale-line allocations. Validation used a copy; version 2 also takes a snapshot before upgrading the working database.
+
+## Follow-up review safeguards
+
+- Removed sales tax from the schema, sale writes and API responses; historical totals and allocated return credits are preserved.
+- Added version 2 for intermediate schemas missing sale-item discounts, including databases already marked with version 1.
+- Added a consistent pre-upgrade SQLite snapshot and transactional legacy stock conversion. Historical carton-size backfills run once, with targeted repair when an administrator supplies a previously unknown product size.
+- Unknown legacy carton sizes create a visible inventory-review alert instead of being silently converted.
+- Returns, refunds, cancellations, stock additions and incoming transfers publish recovery events. Recovery marks matching low-stock warnings as read, keeping carton/unit and 20L stock pools separate. Replayed return requests do not duplicate events.
+- Receipts explicitly label cartons whose historical size was not recorded.
+- Failed stock/app/control scripts show a retry screen. Browser tests cover failed requests and an invalid stock interface.
+- CI verifies the SQLite native binding immediately after its clean install. Node 24, the browser-test script and the ExcelJS UUID security override remain aligned.
 
 ## Still tied to deployment
 
