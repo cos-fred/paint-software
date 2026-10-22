@@ -23,13 +23,6 @@ const ALLOWED_STATUS_TRANSITIONS = {
     refunded: []
 };
 
-function getTaxRate() {
-    const enabled = db.prepare("SELECT value FROM settings WHERE key = 'tax_enabled'").get();
-    if (enabled && enabled.value === 'false') return 0;
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get();
-    const parsed = parseFloat(row?.value);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function restockSale(saleId, warehouseId, userId, referenceType) {
     const items = db.prepare(
@@ -100,16 +93,15 @@ router.get('/export', (req, res) => {
             { header: 'Customer', key: 'customer', width: 25 },
             { header: 'Warehouse', key: 'warehouse', width: 20 },
             { header: 'Subtotal (₵)', key: 'subtotal', width: 15 },
-            { header: 'Tax (₵)', key: 'tax', width: 12 },
-            { header: 'Discount (₵)', key: 'discount', width: 15 },
+            { header: 'Markup (₵)', key: 'markup', width: 15 },
             { header: 'Total (₵)', key: 'total', width: 15 },
             { header: 'Payment', key: 'payment_method', width: 15 },
             { header: 'Status', key: 'payment_status', width: 15 }
         ];
-        rows.forEach(s => ws.addRow({ date: new Date(s.sale_date).toLocaleString(), customer: sanitizeCell(s.customer_name || 'Walk-in'), warehouse: sanitizeCell(s.warehouse_name), subtotal: s.subtotal, tax: s.tax, discount: s.discount, total: s.total, payment_method: s.payment_method, payment_status: s.payment_status }));
+        rows.forEach(s => ws.addRow({ date: new Date(s.sale_date).toLocaleString(), customer: sanitizeCell(s.customer_name || 'Walk-in'), warehouse: sanitizeCell(s.warehouse_name), subtotal: s.subtotal, markup: s.markup, total: s.total, payment_method: s.payment_method, payment_status: s.payment_status }));
         ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFF' } };
         ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E40AF' } };
-        ['subtotal', 'tax', 'discount', 'total'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
+        ['subtotal', 'markup', 'total'].forEach(k => ws.getColumn(k).numFmt = '₵#,##0.00');
         const filename = `VEEMENZ-Sales-${new Date().toISOString().split('T')[0]}.xlsx`;
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -171,15 +163,15 @@ function generateReceipt(sale, items, settings) {
             address: [sale.customer_address, sale.customer_city, sale.customer_state, sale.customer_postal_code, sale.customer_country].filter(Boolean).join(', '),
             tax_id: sale.customer_tax_id
         },
-        items: items.map(i => ({ product_name: i.product_name, unit_type: unitLabels[i.unit_type] || i.unit_type, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, line_total: i.line_total })),
-        subtotal: sale.subtotal, tax: sale.tax, discount: sale.discount, discount_type: sale.discount_type,
+        items: items.map(i => ({ product_name: i.product_name, unit_type: unitLabels[i.unit_type] || i.unit_type, quantity: i.quantity, unit_price: i.unit_price, extra: i.extra, discount: i.discount, line_total: i.line_total })),
+        subtotal: sale.subtotal, markup: sale.markup, discount: sale.discount, discount_type: sale.discount_type,
         total: sale.total, payment_method: sale.payment_method, payment_status: sale.payment_status, notes: sale.notes
     };
 }
 
 router.post('/', (req, res) => {
     try {
-        const { customer_id, warehouse_id, items, payment_method, payment_status, discount, discount_type, notes } = req.body;
+        const { customer_id, warehouse_id, items, payment_method, payment_status, notes } = req.body;
         if (!warehouse_id) return res.status(400).json({ error: 'Warehouse is required' });
         if (!items || items.length === 0) return res.status(400).json({ error: 'At least one item is required' });
 
@@ -222,6 +214,9 @@ router.post('/', (req, res) => {
             const lineDiscount = item.discount != null ? parseFiniteNumber(item.discount, 'Line discount') : 0;
             if (lineDiscount < 0) throw new ClientError(400, 'Line discount cannot be negative');
 
+            const extra = item.extra != null ? parseFiniteNumber(item.extra, 'Extra') : 0;
+            if (extra < 0) throw new ClientError(400, 'Extra cannot be negative');
+
             const gross = quantity * unitPrice;
             if (lineDiscount > gross) throw new ClientError(400, 'Line discount exceeds item total');
             const lineTotal = round2(gross - lineDiscount);
@@ -231,6 +226,7 @@ router.post('/', (req, res) => {
                 unit_type: item.unit_type,
                 quantity,
                 unit_price: unitPrice,
+                extra,
                 discount: lineDiscount,
                 line_total: lineTotal,
                 unitsDelta,
@@ -238,26 +234,22 @@ router.post('/', (req, res) => {
             });
         }
 
-        const taxRate = getTaxRate();
-        const tax = round2(subtotal * taxRate);
-        const discountType = discount_type || 'amount';
-        if (!['amount', 'percent'].includes(discountType)) throw new ClientError(400, 'Invalid discount type');
-        const saleDiscount = discount != null ? parseFiniteNumber(discount, 'Discount') : 0;
-        if (saleDiscount < 0) throw new ClientError(400, 'Discount cannot be negative');
-        const discountAmount = round2(computeDiscount(saleDiscount, discountType, subtotal));
-        const total = round2(subtotal + tax - discountAmount);
+        const markup = round2(validatedItems.reduce((sum, i) => sum + (i.extra * i.quantity), 0));
+
+        const tax = 0;
+        const total = round2(subtotal + markup);
 
         const transaction = db.transaction(() => {
             db.prepare(
-                `INSERT INTO sales (id, customer_id, warehouse_id, subtotal, tax, discount, discount_type, total, payment_method, payment_status, notes, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, discountAmount, discountType, total, method, status, notes || null, req.user.id);
+                `INSERT INTO sales (id, customer_id, warehouse_id, subtotal, tax, markup, discount, discount_type, total, payment_method, payment_status, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, 'amount', ?, ?, ?, ?, ?)`
+            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, markup, total, method, status, notes || null, req.user.id);
 
             for (const item of validatedItems) {
                 const itemId = uuidv4();
                 const stockField = stockColumn(item.unit_type);
-                db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, discount, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                    .run(itemId, saleId, item.product_id, warehouse_id, item.unit_type, item.quantity, item.unit_price, item.discount, item.line_total);
+                db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, warehouse_id, unit_type, quantity, unit_price, extra, discount, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                    .run(itemId, saleId, item.product_id, warehouse_id, item.unit_type, item.quantity, item.unit_price, item.extra, item.discount, item.line_total);
                 const deducted = db.prepare(
                     `UPDATE product_stock SET ${stockField} = ${stockField} - ?, updated_at = CURRENT_TIMESTAMP
                      WHERE product_id = ? AND warehouse_id = ? AND ${stockField} >= ?`
@@ -282,15 +274,6 @@ router.post('/', (req, res) => {
 
 function round2(n) {
     return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function computeDiscount(discount, type, subtotal) {
-    if (type === 'percent') {
-        if (discount > 100) throw new ClientError(400, 'Discount percentage cannot exceed 100%');
-        return subtotal * (discount / 100);
-    }
-    if (discount > subtotal) throw new ClientError(400, 'Discount exceeds subtotal');
-    return discount;
 }
 
 function applyStatusChange(saleId, nextStatus, userId) {

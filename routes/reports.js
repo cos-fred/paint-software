@@ -78,7 +78,7 @@ router.get('/sales/summary', (req, res) => {
     try {
         const { start_date, end_date, warehouse_id } = req.query;
         let query = `SELECT COUNT(*) as total_sales, COALESCE(SUM(subtotal),0) as total_subtotal,
-            COALESCE(SUM(tax),0) as total_tax, COALESCE(SUM(discount),0) as total_discount,
+            COALESCE(SUM(markup),0) as total_markup, COALESCE(SUM(discount),0) as total_discount,
             COALESCE(SUM(total),0) as total_revenue, COALESCE(AVG(total),0) as avg_sale_value
             FROM sales WHERE payment_status = 'completed'`;
         const params = [];

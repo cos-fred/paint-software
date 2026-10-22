@@ -37,6 +37,16 @@ function migrateSchema() {
     if (!stockCols.includes('unit_stock')) {
         db.exec('ALTER TABLE product_stock ADD COLUMN unit_stock INTEGER NOT NULL DEFAULT 0');
     }
+
+    const salesCols = db.prepare('PRAGMA table_info(sales)').all().map((c) => c.name);
+    if (!salesCols.includes('markup')) {
+        db.exec('ALTER TABLE sales ADD COLUMN markup REAL NOT NULL DEFAULT 0');
+    }
+
+    const siCols = db.prepare('PRAGMA table_info(sale_items)').all().map((c) => c.name);
+    if (!siCols.includes('extra')) {
+        db.exec('ALTER TABLE sale_items ADD COLUMN extra REAL NOT NULL DEFAULT 0');
+    }
 }
 
 // Existing databases store only 'carton'/'liter20' unit types; the single-pool
@@ -52,6 +62,7 @@ function migrateUnitTypeCheck() {
             unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            extra REAL NOT NULL DEFAULT 0 CHECK (extra >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             line_total REAL NOT NULL CHECK (line_total >= 0),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -221,6 +232,7 @@ function initializeDatabase() {
             sale_date DATETIME DEFAULT CURRENT_TIMESTAMP,
             subtotal REAL NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
             tax REAL NOT NULL DEFAULT 0 CHECK (tax >= 0),
+            markup REAL NOT NULL DEFAULT 0 CHECK (markup >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             discount_type TEXT NOT NULL DEFAULT 'amount' CHECK (discount_type IN ('amount', 'percent')),
             total REAL NOT NULL DEFAULT 0 CHECK (total >= 0),
@@ -243,6 +255,7 @@ function initializeDatabase() {
             unit_type TEXT NOT NULL CHECK (unit_type IN ('unit', 'carton', 'liter20')),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
             unit_price REAL NOT NULL CHECK (unit_price >= 0),
+            extra REAL NOT NULL DEFAULT 0 CHECK (extra >= 0),
             discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
             line_total REAL NOT NULL CHECK (line_total >= 0),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

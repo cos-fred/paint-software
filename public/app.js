@@ -6,8 +6,6 @@ const API_BASE = '/api';
 let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let warehousesCache = [];
-let taxRate = 0.10;
-let taxEnabled = true;
 let showTotalValue = true;
 let forcePasswordChange = false;
 let confirmCallback = null;
@@ -197,8 +195,10 @@ async function loadUser() {
             if (auditNav) auditNav.style.display = '';
             const resetCard = document.getElementById('reset-card');
             if (resetCard) resetCard.style.display = (user.username === 'admin') ? '' : 'none';
-            document.querySelectorAll('.admin-only-card').forEach(c => c.style.display = '');
         }
+        document.body.classList.toggle('is-admin', user.role === 'admin');
+        const noAccess = document.getElementById('settings-no-access');
+        if (noAccess) noAccess.style.display = user.role === 'admin' ? 'none' : '';
         applyTotalValueVisibility();
         return user;
     } catch (err) {
@@ -381,7 +381,6 @@ function setupEventListeners() {
     document.getElementById('sale-form')?.addEventListener('submit', handleSaleSubmit);
     document.getElementById('status-form')?.addEventListener('submit', handleStatusSubmit);
     document.getElementById('add-sale-item')?.addEventListener('click', addSaleItemRow);
-    document.getElementById('sale-discount')?.addEventListener('input', updateSaleSummary);
     document.getElementById('sale-search')?.addEventListener('input', debounce(loadSales, 400));
     document.getElementById('sale-status-filter')?.addEventListener('change', loadSales);
     document.getElementById('sale-date-from')?.addEventListener('change', loadSales);
@@ -459,9 +458,6 @@ function setupEventListeners() {
 
     // Sales export
     document.getElementById('export-sales-btn')?.addEventListener('click', exportSales);
-
-    // Discount type change recalculates summary
-    document.getElementById('sale-discount-type')?.addEventListener('change', updateSaleSummary);
 
     // Keyboard escape closes modal
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
@@ -1052,7 +1048,7 @@ async function loadSales() {
         const isAdmin = currentUser?.role === 'admin';
 
         if (!sales.length) {
-            tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><h4>No Sales</h4><p>Click "New Sale" to record your first sale</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><h4>No Sales</h4><p>Click "New Sale" to record your first sale</p></td></tr>';
             return;
         }
 
@@ -1062,8 +1058,7 @@ async function loadSales() {
                 <td>${escapeHtml(s.customer_name || 'Walk-in')}</td>
                 <td>${s.item_count ?? '—'}</td>
                 <td>${formatCurrency(s.subtotal)}</td>
-                <td>${formatCurrency(s.tax)}</td>
-                <td>${formatCurrency(s.discount)}</td>
+                <td>${formatCurrency(s.markup)}</td>
                 <td><strong>${formatCurrency(s.total)}</strong></td>
                 <td>${escapeHtml(s.payment_method)}</td>
                 <td><span class="status-badge status-${s.payment_status}">${s.payment_status}</span></td>
@@ -1104,7 +1099,8 @@ function buildSaleItemRow() {
             <option value="liter20">20L Container</option>
         </select>
         <input type="number" class="sale-item-qty" min="1" value="1" required>
-        <input type="number" class="sale-item-discount" step="0.01" min="0" value="0" title="Line discount (₵)" placeholder="Disc.">
+        <label class="sale-item-labeled"><span>Markup</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
+        <label class="sale-item-labeled"><span>Discount</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label>
         <span class="sale-item-price"></span>
         <span class="sale-item-total">${formatCurrency(0)}</span>
         <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
@@ -1115,6 +1111,7 @@ function attachSaleItemEvents(row) {
     row.querySelector('.sale-item-product').addEventListener('change', updateSaleItemPrice);
     row.querySelector('.sale-item-unit').addEventListener('change', updateSaleItemPrice);
     row.querySelector('.sale-item-qty').addEventListener('input', updateSaleSummary);
+    row.querySelector('.sale-item-extra').addEventListener('input', updateSaleSummary);
     row.querySelector('.sale-item-discount').addEventListener('input', updateSaleSummary);
     row.querySelector('.remove-item').addEventListener('click', () => {
         if (document.querySelectorAll('.sale-item-row').length > 1) { row.remove(); updateSaleSummary(); }
@@ -1144,29 +1141,28 @@ function updateSaleItemPrice() {
     const row = this.closest('.sale-item-row');
     const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
     const price = priceForRow(row);
-    row.querySelector('.sale-item-price').textContent = formatCurrency(price) + ' each';
-    row.querySelector('.sale-item-total').textContent = formatCurrency(price * qty);
+    const extra = parseFloat(row.querySelector('.sale-item-extra').value) || 0;
+    row.querySelector('.sale-item-price').textContent = formatCurrency(price + extra) + ' each';
+    row.querySelector('.sale-item-total').textContent = formatCurrency((price + extra) * qty);
     updateSaleSummary();
 }
 
 function updateSaleSummary() {
     let subtotal = 0;
+    let markup = 0;
     document.querySelectorAll('.sale-item-row').forEach(row => {
         const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
         const price = priceForRow(row);
+        const extra = parseFloat(row.querySelector('.sale-item-extra').value) || 0;
         const lineDiscount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
         const lineTotal = Math.max(0, (price * qty) - lineDiscount);
-        row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal);
+        row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal + (extra * qty));
         subtotal += lineTotal;
+        markup += extra * qty;
     });
-    const tax = taxEnabled ? subtotal * taxRate : 0;
-    const discount = parseFloat(document.getElementById('sale-discount')?.value) || 0;
-    const discountType = document.getElementById('sale-discount-type')?.value || 'amount';
-    const discountAmount = discountType === 'percent' ? subtotal * (discount / 100) : discount;
-    const total = Math.max(0, subtotal + tax - discountAmount);
+    const total = Math.max(0, subtotal + markup);
     document.getElementById('sale-subtotal').textContent = formatCurrency(subtotal);
-    document.getElementById('sale-tax').textContent = formatCurrency(tax);
-    document.getElementById('sale-discount-display').textContent = formatCurrency(discountAmount);
+    document.getElementById('sale-markup').textContent = formatCurrency(markup);
     document.getElementById('sale-total').textContent = formatCurrency(total);
 }
 
@@ -1182,8 +1178,9 @@ async function handleSaleSubmit(e) {
         const unitType = row.querySelector('.sale-item-unit').value;
         const qty = parseInt(row.querySelector('.sale-item-qty').value);
         const price = priceForRow(row);
+        const extra = parseFloat(row.querySelector('.sale-item-extra').value) || 0;
         const discount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
-        items.push({ product_id: productId, unit_type: unitType, quantity: qty, unit_price: price, discount });
+        items.push({ product_id: productId, unit_type: unitType, quantity: qty, unit_price: price, extra, discount });
     });
     if (hasError || !items.length) { showToast('Please add at least one valid item', 'error'); return; }
     const data = {
@@ -1191,8 +1188,6 @@ async function handleSaleSubmit(e) {
         warehouse_id: warehouseId, items,
         payment_method: document.getElementById('sale-payment-method').value,
         payment_status: document.getElementById('sale-payment-status')?.value || 'completed',
-        discount: parseFloat(document.getElementById('sale-discount').value) || 0,
-        discount_type: document.getElementById('sale-discount-type')?.value || 'amount',
         notes: document.getElementById('sale-notes').value.trim()
     };
     try {
@@ -1249,7 +1244,7 @@ function displayReceipt(receipt) {
             </table>
             <div class="receipt-totals">
                 <div class="receipt-row"><span>Subtotal:</span><span>${formatCurrency(receipt.subtotal)}</span></div>
-                <div class="receipt-row"><span>Tax:</span><span>${formatCurrency(receipt.tax)}</span></div>
+                ${receipt.markup > 0 ? `<div class="receipt-row"><span>Markup:</span><span>${formatCurrency(receipt.markup)}</span></div>` : ''}
                 ${receipt.discount > 0 ? `<div class="receipt-row"><span>Discount:</span><span>-${formatCurrency(receipt.discount)}</span></div>` : ''}
                 <div class="receipt-row total"><span>TOTAL:</span><span>${formatCurrency(receipt.total)}</span></div>
                 <div class="receipt-row"><span>Payment:</span><span>${escapeHtml(receipt.payment_method)}</span></div>
@@ -1460,18 +1455,8 @@ async function loadSettings() {
         const settings = await res.json();
         settings.forEach(s => {
             const el = document.getElementById(`setting-${s.key}`);
-            if (!el) return;
-            // tax_rate is stored as a fraction (0.10 = 10%) but shown as a percentage.
-            if (s.key === 'tax_rate') {
-                el.value = String((Number.isFinite(parseFloat(s.value)) ? parseFloat(s.value) : 0) * 100);
-            } else {
-                el.value = s.value;
-            }
+            if (el) el.value = s.value;
         });
-        const tr = settings.find(s => s.key === 'tax_rate');
-        if (tr) taxRate = Number.isFinite(parseFloat(tr.value)) ? parseFloat(tr.value) : 0;
-        const te = settings.find(s => s.key === 'tax_enabled');
-        if (te) taxEnabled = te.value !== 'false';
         const sv = settings.find(s => s.key === 'show_total_value');
         if (sv) showTotalValue = sv.value !== 'false';
         const cur = settings.find(s => s.key === 'currency');
@@ -1496,22 +1481,13 @@ async function handleCompanySettings(e) {
 
 async function handleSystemSettings(e) {
     e.preventDefault();
-    const fields = ['tax_rate', 'tax_enabled', 'show_total_value', 'currency', 'low_stock_threshold_default', 'notifications_enabled', 'notifications_webhook_url'];
+    const fields = ['show_total_value', 'currency', 'low_stock_threshold_default', 'notifications_enabled', 'notifications_webhook_url'];
     try {
         for (const key of fields) {
             const el = document.getElementById(`setting-${key}`);
             if (!el) continue;
-            let value = el.value;
-            // tax_rate is shown as a percentage but stored as a fraction.
-            if (key === 'tax_rate') {
-                const pct = parseFloat(el.value);
-                value = String(Number.isFinite(pct) ? pct / 100 : 0);
-            }
-            await fetchWithAuth(`${API_BASE}/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) });
+            await fetchWithAuth(`${API_BASE}/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value: el.value }) });
         }
-        const taxRatePct = parseFloat(document.getElementById('setting-tax_rate')?.value);
-        taxRate = (Number.isFinite(taxRatePct) ? taxRatePct : 0) / 100;
-        taxEnabled = document.getElementById('setting-tax_enabled')?.value !== 'false';
         showTotalValue = document.getElementById('setting-show_total_value')?.value !== 'false';
         applyTotalValueVisibility();
         showToast('System settings saved', 'success');
@@ -1575,7 +1551,7 @@ async function editUser(id) {
         document.getElementById('user-modal-title').textContent = 'Edit User';
         document.getElementById('user-username').value = u.username;
         document.getElementById('user-email').value = u.email;
-        document.getElementById('user-role').value = u.role;
+        document.getElementById('user-role-select').value = u.role;
         document.getElementById('user-password').required = false;
         document.getElementById('user-password').placeholder = 'Leave blank to keep current';
         setPermissionCheckboxes(u.permissions || []);
@@ -1590,7 +1566,7 @@ async function handleUserSubmit(e) {
     const data = {
         username: document.getElementById('user-username').value.trim(),
         email: document.getElementById('user-email').value.trim(),
-        role: document.getElementById('user-role').value,
+        role: document.getElementById('user-role-select').value,
         permissions: collectPermissions()
     };
     if (!id) {
