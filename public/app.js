@@ -1099,8 +1099,8 @@ function buildSaleItemRow() {
             <option value="liter20">20L Container</option>
         </select>
         <input type="number" class="sale-item-qty" min="1" value="1" required>
-        <label class="sale-item-labeled"><span>Markup</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
-        <label class="sale-item-labeled"><span>Discount</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label>
+        <label class="sale-item-labeled"><span>Markup/item</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
+        <label class="sale-item-labeled"><span>Discount/item</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label>
         <span class="sale-item-price"></span>
         <span class="sale-item-total">${formatCurrency(0)}</span>
         <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
@@ -1142,23 +1142,31 @@ function updateSaleItemPrice() {
     const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
     const price = priceForRow(row);
     const extra = parseFloat(row.querySelector('.sale-item-extra').value) || 0;
-    row.querySelector('.sale-item-price').textContent = formatCurrency(price + extra) + ' each';
-    row.querySelector('.sale-item-total').textContent = formatCurrency((price + extra) * qty);
+    const discount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
+    // Display effective per-unit price after markup and discount
+    row.querySelector('.sale-item-price').textContent = formatCurrency(price + extra - discount) + ' each';
+    row.querySelector('.sale-item-total').textContent = formatCurrency(Math.max(0, (price + extra - discount) * qty));
     updateSaleSummary();
 }
 
 function updateSaleSummary() {
     let subtotal = 0;
     let markup = 0;
+    let totalDiscount = 0;
     document.querySelectorAll('.sale-item-row').forEach(row => {
         const qty = parseInt(row.querySelector('.sale-item-qty').value) || 0;
         const price = priceForRow(row);
         const extra = parseFloat(row.querySelector('.sale-item-extra').value) || 0;
-        const lineDiscount = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
-        const lineTotal = Math.max(0, (price * qty) - lineDiscount);
-        row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal + (extra * qty));
+        // discount is a per-item amount, just like extra (markup)
+        const discountPerItem = parseFloat(row.querySelector('.sale-item-discount').value) || 0;
+        const lineMarkup = extra * qty;
+        const lineDiscount = discountPerItem * qty;
+        const lineGross = price * qty;
+        const lineTotal = Math.max(0, lineGross - lineDiscount);
+        row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal + lineMarkup);
         subtotal += lineTotal;
-        markup += extra * qty;
+        markup += lineMarkup;
+        totalDiscount += lineDiscount;
     });
     const total = Math.max(0, subtotal + markup);
     document.getElementById('sale-subtotal').textContent = formatCurrency(subtotal);

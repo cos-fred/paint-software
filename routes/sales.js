@@ -211,14 +211,18 @@ router.post('/', (req, res) => {
             // Server-authoritative pricing: always use the configured product price.
             const unitPrice = row.price;
 
-            const lineDiscount = item.discount != null ? parseFiniteNumber(item.discount, 'Line discount') : 0;
-            if (lineDiscount < 0) throw new ClientError(400, 'Line discount cannot be negative');
+            // extra and discount are both per-item amounts (like a per-unit markup
+            // or per-unit reduction). They are multiplied by quantity server-side,
+            // matching how markup (extra) has always been calculated.
+            const discountPerItem = item.discount != null ? parseFiniteNumber(item.discount, 'Discount per item') : 0;
+            if (discountPerItem < 0) throw new ClientError(400, 'Discount per item cannot be negative');
 
-            const extra = item.extra != null ? parseFiniteNumber(item.extra, 'Extra') : 0;
-            if (extra < 0) throw new ClientError(400, 'Extra cannot be negative');
+            const extra = item.extra != null ? parseFiniteNumber(item.extra, 'Markup per item') : 0;
+            if (extra < 0) throw new ClientError(400, 'Markup per item cannot be negative');
 
+            const lineDiscount = round2(discountPerItem * quantity);
             const gross = quantity * unitPrice;
-            if (lineDiscount > gross) throw new ClientError(400, 'Line discount exceeds item total');
+            if (lineDiscount > gross) throw new ClientError(400, 'Discount exceeds item total');
             const lineTotal = round2(gross - lineDiscount);
             subtotal = round2(subtotal + lineTotal);
             validatedItems.push({
@@ -227,7 +231,7 @@ router.post('/', (req, res) => {
                 quantity,
                 unit_price: unitPrice,
                 extra,
-                discount: lineDiscount,
+                discount: discountPerItem,
                 line_total: lineTotal,
                 unitsDelta,
                 oldStock: row.stock
