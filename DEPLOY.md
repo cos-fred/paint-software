@@ -1,109 +1,16 @@
-# Deploying VEEMENZ Online
+# Deployment preparation — deferred
 
-This guide gets VEEMENZ live on the internet with a shared SQLite database on a
-persistent disk, so everyone sees the same data with live (WebSocket) updates.
+Deployment has not been performed. The app is prepared for one Node.js 24 application instance with persistent SQLite storage. The supported runtime is pinned in package.json, .nvmrc, Dockerfile and nixpacks.toml.
 
-The app needs two things from the host:
+When hosting is chosen:
 
-1. **A persistent disk** — so the `paint_inventory.db` file survives redeploys.
-2. **A `JWT_SECRET` environment variable** — a long random string.
+1. Run npm ci, npm audit --omit=dev, npm test and npm run test:browser on Node 24.
+2. Use the Dockerfile or the documented Node runtime. It uses npm ci and runs as a non-root user.
+3. Attach persistent storage at /data. Keep one application instance and one SQLite file on that storage. Do not use ephemeral or shared network storage for the running database.
+4. Set NODE_ENV=production, DB_PATH=/data/paint_inventory.db, BACKUP_DIR=/data/backups, a strong JWT_SECRET and the initial ADMIN_PASSWORD. Configure the real HTTPS origin in CORS_ORIGIN and TRUST_PROXY=1 only behind a trusted reverse proxy.
+5. Arrange an independent encrypted backup destination and verify a restore. See docs/RECOVERY.md. Local snapshots alone are not off-server recovery.
+6. Enable HTTPS, automatic process restart, external health checks for /api/health, storage monitoring and hosting budget alerts. No paid service, monitoring subscription or destination is provisioned by these code changes.
+7. Start with a fresh production database instead of uploading disposable development data. Create individual staff users and enter verified opening inventory.
+8. Confirm that restart and redeploy preserve records, staff permissions work, simultaneous last-stock sales are safe, and backup health is green. Schedule updates outside trading hours: a single-instance setup may have short deployment downtime.
 
-The code is already prepared:
-- `server.js` reads `process.env.PORT` (cloud hosts set this).
-- `database.js` reads `process.env.DB_PATH` and auto-creates its folder.
-- `services/realtime.js` + `services/audit.js` broadcast changes over WebSockets.
-- `.env.example` lists every setting.
-
----
-
-## Option 1 — Railway (easiest)
-
-1. **Push this folder to GitHub.**
-   ```bash
-   git init
-   git add .
-   git commit -m "VEEMENZ"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_USERNAME/paint-software.git
-   git push -u origin main
-   ```
-
-2. **Create the app on Railway**
-   - Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → select your repo.
-   - Railway auto-detects Node and runs `npm start`.
-
-3. **Add a persistent volume (for the database)**
-   - In your service → **Settings → Volumes** → **Add Volume**.
-   - Mount path: `/data`
-   - (This keeps the SQLite file across deploys.)
-
-4. **Set environment variables** (service → **Variables**)
-   | Name | Value |
-   |------|-------|
-   | `JWT_SECRET` | a long random string (see `.env.example`); never a placeholder |
-   | `ADMIN_PASSWORD` | strong password used only to create the first admin |
-   | `DB_PATH` | `/data/paint_inventory.db` |
-   | `BACKUP_DIR` | `/data/backups` |
-   | `CORS_ORIGIN` | `https://your-app.up.railway.app` (explicit origin, never `*`) |
-   | `TRUST_PROXY` | `1` |
-
-5. Railway gives you a **public URL** (e.g. `https://your-app.up.railway.app`).
-   Open it and log in as `admin` with the `ADMIN_PASSWORD` you set. There is no default password.
-
-> Note: `better-sqlite3` ships prebuilt binaries, so it usually installs cleanly.
-> A `Dockerfile`, `.nvmrc` and `nixpacks.toml` are already included to pin Node 20
-> and provide native build tools. If Nixpacks fails on the native module, switch
-> your Railway builder to **Dockerfile** (it will use the included Dockerfile).
-
----
-
-## Option 2 — Render (free tier, with caveats)
-
-1. Push to GitHub (same as above).
-2. [render.com](https://render.com) → **New → Web Service** → connect repo.
-3. Build command: `npm install` · Start command: `npm start`.
-4. **Persistent disk**: Render free disks are not persistent unless you add a
-   **paid disk** (New → Disk, mount at `/data`). Without a disk, the database
-   resets on each deploy — not recommended for production.
-5. Env vars: same as the Railway table above.
-6. Render gives you a URL like `https://your-app.onrender.com`.
-
-> Render free instances **sleep after ~15 min of inactivity** and take ~30s to
-> wake. For a real business, use Railway (or a paid Render plan / VPS).
-
----
-
-## Option 3 — Your own VPS (full control)
-
-```bash
-# on the server
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt install -y nodejs build-essential python3
-git clone https://github.com/YOUR_USERNAME/paint-software.git
-cd paint-software
-npm install
-cp .env.example .env   # then edit JWT_SECRET and DB_PATH
-nohup npm start &
-```
-
-Point a domain at it and put it behind HTTPS (Caddy/Nginx + Let's Encrypt).
-
----
-
-## Security checklist (before going live)
-
-- [ ] Set a strong random `JWT_SECRET` (32+ chars). If an old secret may have been exposed, rotate it now — all sessions will end.
-- [ ] Set `ADMIN_PASSWORD` for first boot; do not use a published default.
-- [ ] Change the administrator password after first login if anyone else saw `ADMIN_PASSWORD`.
-- [ ] Set `CORS_ORIGIN` to your https origin (not `*`).
-- [ ] Set `TRUST_PROXY=1` so login throttling sees real client IPs.
-- [ ] Enable HTTPS (Railway/Render do this automatically).
-- [ ] Restrict access to the SQLite file and backup directory.
-
-## What "real-time" means here
-
-Any time someone saves a sale, product, customer, transfer, return, or stock
-change, the server broadcasts a `data-changed` event over WebSockets. Every open
-browser tab automatically refreshes its current screen and dashboard — so two
-people in different locations always see the same, current data without manually
-reloading.
+Leave ALLOW_SYSTEM_RESET unset in production. Keep credentials and database files out of the repository. A custom domain is optional. Choose a hosting service with persistent disks/volumes; free ephemeral services are unsuitable for this SQLite deployment. PostgreSQL migration is not necessary for the expected five-user workload and has not been implemented.

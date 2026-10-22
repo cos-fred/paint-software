@@ -33,3 +33,9 @@ Thumbs.db
 # Temporary
 *.tmp
 *.temp
+
+# Automated browser reports and encrypted snapshots
+playwright-report/
+test-results/
+*.db.enc
+*.partial

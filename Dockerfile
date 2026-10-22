@@ -1,5 +1,5 @@
 # VEEMENZ — production image
-FROM node:20-slim
+FROM node:24-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
@@ -8,7 +8,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 COPY --chown=node:node . .
 
@@ -20,6 +20,8 @@ ENV PORT=3000
 ENV DB_PATH=/data/paint_inventory.db
 ENV BACKUP_DIR=/data/backups
 ENV TRUST_PROXY=1
+ENV WEB_CONCURRENCY=1
+ENV WEB_CONCURRENCY=1
 
 USER node
 

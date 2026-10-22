@@ -4,7 +4,8 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'paint_inventory.db');
+const dbPath =
+    process.env.DB_PATH || path.join(__dirname, 'paint_inventory.db');
 if (process.env.DB_PATH) {
     const dir = path.dirname(dbPath);
     if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -14,41 +15,71 @@ const { validateAdminPassword } = require('./lib/passwords');
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
-db.pragma('synchronous = NORMAL');
+db.pragma('synchronous = FULL');
+db.pragma('busy_timeout = 5000');
 
 function migrateSchema() {
-    const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+    const userCols = db
+        .prepare('PRAGMA table_info(users)')
+        .all()
+        .map((c) => c.name);
     if (!userCols.includes('token_version')) {
-        db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'
+        );
     }
     if (!userCols.includes('permissions')) {
-        db.exec("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'");
+        db.exec(
+            "ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'"
+        );
     }
     if (!userCols.includes('must_change_password')) {
-        db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0'
+        );
     }
 
-    const productCols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name);
+    const productCols = db
+        .prepare('PRAGMA table_info(products)')
+        .all()
+        .map((c) => c.name);
     if (!productCols.includes('units_per_carton')) {
-        db.exec('ALTER TABLE products ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE products ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0'
+        );
     }
 
-    const stockCols = db.prepare('PRAGMA table_info(product_stock)').all().map((c) => c.name);
+    const stockCols = db
+        .prepare('PRAGMA table_info(product_stock)')
+        .all()
+        .map((c) => c.name);
     if (!stockCols.includes('unit_stock')) {
-        db.exec('ALTER TABLE product_stock ADD COLUMN unit_stock INTEGER NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE product_stock ADD COLUMN unit_stock INTEGER NOT NULL DEFAULT 0'
+        );
     }
 
-    const salesCols = db.prepare('PRAGMA table_info(sales)').all().map((c) => c.name);
+    const salesCols = db
+        .prepare('PRAGMA table_info(sales)')
+        .all()
+        .map((c) => c.name);
     if (!salesCols.includes('markup')) {
         db.exec('ALTER TABLE sales ADD COLUMN markup REAL NOT NULL DEFAULT 0');
     }
 
-    const siCols = db.prepare('PRAGMA table_info(sale_items)').all().map((c) => c.name);
+    const siCols = db
+        .prepare('PRAGMA table_info(sale_items)')
+        .all()
+        .map((c) => c.name);
     if (!siCols.includes('units_per_carton')) {
-        db.exec('ALTER TABLE sale_items ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE sale_items ADD COLUMN units_per_carton INTEGER NOT NULL DEFAULT 0'
+        );
     }
     if (!siCols.includes('extra')) {
-        db.exec('ALTER TABLE sale_items ADD COLUMN extra REAL NOT NULL DEFAULT 0');
+        db.exec(
+            'ALTER TABLE sale_items ADD COLUMN extra REAL NOT NULL DEFAULT 0'
+        );
     }
 
     // Backfill rows from before sale items recorded their sale-time conversion.
@@ -81,21 +112,29 @@ function migrateSchema() {
     `);
 
     // Startup warning for any products with carton_stock > 0 but units_per_carton = 0
-    const unmigrated = db.prepare(`
+    const unmigrated = db
+        .prepare(
+            `
         SELECT p.id, p.name, ps.carton_stock
         FROM product_stock ps
         JOIN products p ON ps.product_id = p.id
         WHERE ps.unit_stock = 0 AND ps.carton_stock > 0 AND p.units_per_carton <= 0 AND p.is_active = 1
-    `).all();
+    `
+        )
+        .all();
     if (unmigrated.length > 0) {
         for (const item of unmigrated) {
-            console.warn(`[warn] Product "${item.name}" (id: ${item.id}) has ${item.carton_stock} legacy cartons but units_per_carton is 0. Please edit product to set units per carton.`);
+            console.warn(
+                `[warn] Product "${item.name}" (id: ${item.id}) has ${item.carton_stock} legacy cartons but units_per_carton is 0. Please edit product to set units per carton.`
+            );
         }
     }
 
     // Tax handling was removed in favour of per-item markup. Drop the stale
     // settings so they are not exposed or written again.
-    db.prepare("DELETE FROM settings WHERE key IN ('tax_rate', 'tax_enabled')").run();
+    db.prepare(
+        "DELETE FROM settings WHERE key IN ('tax_rate', 'tax_enabled')"
+    ).run();
 }
 
 // Existing databases store only 'carton'/'liter20' unit types; the single-pool
@@ -103,7 +142,9 @@ function migrateSchema() {
 // is accepted, preserving all existing rows and foreign keys with explicit column mappings.
 function migrateUnitTypeCheck() {
     const tables = [
-        { name: 'sale_items', sql: `CREATE TABLE sale_items (
+        {
+            name: 'sale_items',
+            sql: `CREATE TABLE sale_items (
             id TEXT PRIMARY KEY,
             sale_id TEXT NOT NULL,
             product_id TEXT NOT NULL,
@@ -119,8 +160,11 @@ function migrateUnitTypeCheck() {
             FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
             FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT
-        )` },
-        { name: 'sale_returns', sql: `CREATE TABLE sale_returns (
+        )`
+        },
+        {
+            name: 'sale_returns',
+            sql: `CREATE TABLE sale_returns (
             id TEXT PRIMARY KEY,
             sale_id TEXT NOT NULL,
             product_id TEXT NOT NULL,
@@ -136,8 +180,11 @@ function migrateUnitTypeCheck() {
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
             FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT,
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
-        )` },
-        { name: 'stock_transfers', sql: `CREATE TABLE stock_transfers (
+        )`
+        },
+        {
+            name: 'stock_transfers',
+            sql: `CREATE TABLE stock_transfers (
             id TEXT PRIMARY KEY,
             product_id TEXT NOT NULL,
             from_warehouse_id TEXT NOT NULL,
@@ -151,8 +198,11 @@ function migrateUnitTypeCheck() {
             FOREIGN KEY (from_warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
             FOREIGN KEY (to_warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
-        )` },
-        { name: 'stock_movements', sql: `CREATE TABLE stock_movements (
+        )`
+        },
+        {
+            name: 'stock_movements',
+            sql: `CREATE TABLE stock_movements (
             id TEXT PRIMARY KEY,
             product_id TEXT NOT NULL,
             warehouse_id TEXT NOT NULL,
@@ -167,12 +217,23 @@ function migrateUnitTypeCheck() {
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
             FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE,
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
-        )` }
+        )`
+        }
     ];
 
     const needs = tables.filter((t) => {
-        const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(t.name);
-        return row && row.sql && (!row.sql.includes("'unit'") || (t.name === 'sale_items' && !row.sql.includes('units_per_carton')));
+        const row = db
+            .prepare(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?"
+            )
+            .get(t.name);
+        return (
+            row &&
+            row.sql &&
+            (!row.sql.includes("'unit'") ||
+                (t.name === 'sale_items' &&
+                    !row.sql.includes('units_per_carton')))
+        );
     });
     if (needs.length === 0) return;
 
@@ -182,8 +243,14 @@ function migrateUnitTypeCheck() {
             for (const t of needs) {
                 db.exec(`ALTER TABLE ${t.name} RENAME TO ${t.name}_old`);
                 db.exec(t.sql);
-                const oldCols = db.prepare(`PRAGMA table_info(${t.name}_old)`).all().map((c) => c.name);
-                const newCols = db.prepare(`PRAGMA table_info(${t.name})`).all().map((c) => c.name);
+                const oldCols = db
+                    .prepare(`PRAGMA table_info(${t.name}_old)`)
+                    .all()
+                    .map((c) => c.name);
+                const newCols = db
+                    .prepare(`PRAGMA table_info(${t.name})`)
+                    .all()
+                    .map((c) => c.name);
                 const targetCols = [];
                 const selectExprs = [];
                 for (const col of newCols) {
@@ -198,10 +265,14 @@ function migrateUnitTypeCheck() {
                         selectExprs.push('0 AS discount');
                     } else if (col === 'units_per_carton') {
                         targetCols.push(col);
-                        selectExprs.push(`COALESCE((SELECT units_per_carton FROM products WHERE products.id = ${t.name}_old.product_id), 0) AS units_per_carton`);
+                        selectExprs.push(
+                            `COALESCE((SELECT units_per_carton FROM products WHERE products.id = ${t.name}_old.product_id), 0) AS units_per_carton`
+                        );
                     }
                 }
-                db.exec(`INSERT INTO ${t.name} (${targetCols.join(', ')}) SELECT ${selectExprs.join(', ')} FROM ${t.name}_old`);
+                db.exec(
+                    `INSERT INTO ${t.name} (${targetCols.join(', ')}) SELECT ${selectExprs.join(', ')} FROM ${t.name}_old`
+                );
                 db.exec(`DROP TABLE ${t.name}_old`);
             }
             db.exec(`
@@ -216,7 +287,10 @@ function migrateUnitTypeCheck() {
             // rolled back instead of leaving the database migrated but unusable.
             const fkErrors = db.prepare('PRAGMA foreign_key_check').all();
             if (fkErrors.length > 0) {
-                throw new Error('Foreign key constraint violation after migration: ' + JSON.stringify(fkErrors));
+                throw new Error(
+                    'Foreign key constraint violation after migration: ' +
+                        JSON.stringify(fkErrors)
+                );
             }
         });
         run();
@@ -443,19 +517,31 @@ function initializeDatabase() {
 
     migrateSchema();
     migrateUnitTypeCheck();
+    require('./lib/migrations').runLaunchMigrations(db);
 
-    const warehouseCount = db.prepare('SELECT COUNT(*) as count FROM warehouses').get().count;
+    const warehouseCount = db
+        .prepare('SELECT COUNT(*) as count FROM warehouses')
+        .get().count;
     if (warehouseCount === 0) {
         seedDefaultWarehouses();
     }
 
     // Initial admin account — no hardcoded default password, and never reset
     // an existing administrator on later startups.
-    const existingAdmin = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+    const existingAdmin = db
+        .prepare('SELECT id FROM users WHERE username = ?')
+        .get('admin');
     if (!existingAdmin) {
         const adminPassword = validateAdminPassword(process.env.ADMIN_PASSWORD);
-        db.prepare('INSERT INTO users (id, username, email, password_hash, role, is_active, token_version) VALUES (?, ?, ?, ?, ?, 1, 0)')
-            .run(uuidv4(), 'admin', 'admin@veemenz.com', bcrypt.hashSync(adminPassword, 12), 'admin');
+        db.prepare(
+            'INSERT INTO users (id, username, email, password_hash, role, is_active, token_version) VALUES (?, ?, ?, ?, ?, 1, 0)'
+        ).run(
+            uuidv4(),
+            'admin',
+            'admin@veemenz.com',
+            bcrypt.hashSync(adminPassword, 12),
+            'admin'
+        );
     }
 
     insertDefaultSettings();
@@ -463,33 +549,85 @@ function initializeDatabase() {
 
 function insertDefaultSettings() {
     const settings = [
-        { key: 'company_name', value: 'VEEMENZ', description: 'Company name for receipts' },
-        { key: 'company_address', value: '123 Industrial Ave, Accra, Ghana', description: 'Company address for receipts' },
-        { key: 'company_phone', value: '+233-XX-XXX-XXXX', description: 'Company phone for receipts' },
-        { key: 'company_email', value: 'info@veemenz.com', description: 'Company email for receipts' },
-        { key: 'show_total_value', value: 'true', description: 'Show total inventory value (admin only)' },
+        {
+            key: 'company_name',
+            value: 'VEEMENZ',
+            description: 'Company name for receipts'
+        },
+        {
+            key: 'company_address',
+            value: '123 Industrial Ave, Accra, Ghana',
+            description: 'Company address for receipts'
+        },
+        {
+            key: 'company_phone',
+            value: '+233-XX-XXX-XXXX',
+            description: 'Company phone for receipts'
+        },
+        {
+            key: 'company_email',
+            value: 'info@veemenz.com',
+            description: 'Company email for receipts'
+        },
+        {
+            key: 'show_total_value',
+            value: 'true',
+            description: 'Show total inventory value (admin only)'
+        },
         { key: 'currency', value: 'GHS', description: 'Currency code' },
-        { key: 'low_stock_threshold_default', value: '10', description: 'Default low stock threshold' },
-        { key: 'notifications_enabled', value: 'false', description: 'Enable low-stock notifications' },
-        { key: 'notifications_webhook_url', value: '', description: 'Webhook URL for low-stock notifications' }
+        {
+            key: 'low_stock_threshold_default',
+            value: '10',
+            description: 'Default low stock threshold'
+        },
+        {
+            key: 'notifications_enabled',
+            value: 'false',
+            description: 'Enable low-stock notifications'
+        },
+        {
+            key: 'notifications_webhook_url',
+            value: '',
+            description: 'Webhook URL for low-stock notifications'
+        }
     ];
-    const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value, description) VALUES (?, ?, ?)');
+    const insert = db.prepare(
+        'INSERT OR IGNORE INTO settings (key, value, description) VALUES (?, ?, ?)'
+    );
     for (const s of settings) insert.run(s.key, s.value, s.description);
 }
 
 function seedDefaultWarehouses() {
     const warehouses = [
-        { id: uuidv4(), name: 'Main Warehouse', code: 'WH001', address: '123 Industrial Ave', city: 'Accra', country: 'Ghana' },
-        { id: uuidv4(), name: 'Secondary Warehouse', code: 'WH002', address: '456 Commerce Rd', city: 'Tema', country: 'Ghana' }
+        {
+            id: uuidv4(),
+            name: 'Main Warehouse',
+            code: 'WH001',
+            address: '123 Industrial Ave',
+            city: 'Accra',
+            country: 'Ghana'
+        },
+        {
+            id: uuidv4(),
+            name: 'Secondary Warehouse',
+            code: 'WH002',
+            address: '456 Commerce Rd',
+            city: 'Tema',
+            country: 'Ghana'
+        }
     ];
-    const insert = db.prepare('INSERT INTO warehouses (id, name, code, address, city, country) VALUES (?, ?, ?, ?, ?, ?)');
-    for (const w of warehouses) insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
+    const insert = db.prepare(
+        'INSERT INTO warehouses (id, name, code, address, city, country) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    for (const w of warehouses)
+        insert.run(w.id, w.name, w.code, w.address, w.city, w.country);
 }
 
 // Completely wipe business data and reset to a fresh state, preserving only the
 // given admin account. Re-seeds default warehouses and settings.
 function resetDatabase(adminId) {
     const transaction = db.transaction(() => {
+        db.prepare('DELETE FROM request_keys').run();
         db.prepare('DELETE FROM sale_returns').run();
         db.prepare('DELETE FROM sale_items').run();
         db.prepare('DELETE FROM stock_movements').run();
@@ -503,11 +641,10 @@ function resetDatabase(adminId) {
         db.prepare('DELETE FROM users WHERE id != ?').run(adminId);
         db.prepare('DELETE FROM warehouses').run();
         db.prepare('DELETE FROM settings').run();
+        seedDefaultWarehouses();
+        insertDefaultSettings();
     });
     transaction();
-
-    seedDefaultWarehouses();
-    insertDefaultSettings();
 }
 
 function getDb() {

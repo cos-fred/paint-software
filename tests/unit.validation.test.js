@@ -1,8 +1,21 @@
-const { describe, it } = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+process.env.DB_PATH = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'paint-validation-')),
+    'test.db'
+);
+process.env.NODE_ENV = 'test';
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositiveInteger, parseNonNegativeInteger, parseFiniteNumber } = require('../lib/validation');
+const {
+    parsePositiveInteger,
+    parseNonNegativeInteger,
+    parseFiniteNumber
+} = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
 const { isSafeWebhookUrl } = require('../services/notifications');
+after(() => require('../database').getDb().close());
 
 describe('Quantity validation', () => {
     it('accepts positive integers', () => {
@@ -11,6 +24,8 @@ describe('Quantity validation', () => {
     });
 
     it('rejects zero, negative, fractional, NaN, Infinity and unsafe integers', () => {
+        for (const value of [null, true, false, '', [], {}])
+            assert.throws(() => parsePositiveInteger(value));
         assert.throws(() => parsePositiveInteger(0));
         assert.throws(() => parsePositiveInteger(-1));
         assert.throws(() => parsePositiveInteger('1.9'));
@@ -68,6 +83,9 @@ describe('Webhook URL safety', () => {
         assert.equal(isSafeWebhookUrl('http://10.0.0.1/hook'), false);
         assert.equal(isSafeWebhookUrl('http://192.168.1.5/hook'), false);
         assert.equal(isSafeWebhookUrl('http://172.16.0.1/hook'), false);
-        assert.equal(isSafeWebhookUrl('http://169.254.169.254/latest/meta-data'), false);
+        assert.equal(
+            isSafeWebhookUrl('http://169.254.169.254/latest/meta-data'),
+            false
+        );
     });
 });

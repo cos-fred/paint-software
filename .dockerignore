@@ -11,3 +11,8 @@ backups
 Dockerfile
 .dockerignore
 DEPLOY.md
+test-results
+playwright-report
+tests
+*.db.enc
+*.partial

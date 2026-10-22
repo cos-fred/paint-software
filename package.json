@@ -7,7 +7,10 @@
     "start": "node server.js",
     "dev": "node server.js",
     "init-db": "node -e \"require('./database').initializeDatabase()\"",
-    "test": "node --test --test-concurrency=1 tests/unit.security.test.js tests/unit.validation.test.js tests/unit.low-stock.test.js tests/unit.migration.test.js tests/startup.security.test.js tests/api.security.test.js tests/api.pricing.test.js tests/api.reset.test.js tests/api.units.test.js"
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:browser": "playwright test",
+    "restore": "node scripts/restore.js",
+    "test:all": "npm test && npm run test:browser"
   },
   "keywords": [
     "inventory",
@@ -17,7 +20,7 @@
   ],
   "type": "commonjs",
   "engines": {
-    "node": ">=18 <22"
+    "node": ">=24 <25"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -33,6 +36,13 @@
     "uuid": "^14.0.3"
   },
   "devDependencies": {
-    "node-gyp": "^13.1.0"
+    "@playwright/test": "^1.64.1",
+    "node-gyp": "^13.1.0",
+    "socket.io-client": "^4.8.4"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   }
 }

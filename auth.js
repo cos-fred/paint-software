@@ -26,15 +26,20 @@ function verifyToken(token) {
 }
 
 function bumpTokenVersion(userId) {
-    getDb().prepare(
-        'UPDATE users SET token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(userId);
+    getDb()
+        .prepare(
+            'UPDATE users SET token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        )
+        .run(userId);
+    require('./services/realtime').invalidateUser(userId);
 }
 
 function loadCurrentUser(userId) {
-    return getDb().prepare(
-        'SELECT id, username, email, role, is_active, token_version, permissions FROM users WHERE id = ?'
-    ).get(userId);
+    return getDb()
+        .prepare(
+            'SELECT id, username, email, role, is_active, token_version, permissions, must_change_password FROM users WHERE id = ?'
+        )
+        .get(userId);
 }
 
 function parsePermissions(raw) {
@@ -88,8 +93,25 @@ function authenticateToken(req, res, next) {
         email: current.email,
         role: current.role,
         token_version: current.token_version || 0,
-        permissions: parsePermissions(current.permissions)
+        permissions: parsePermissions(current.permissions),
+        must_change_password: !!current.must_change_password
     };
+    const authPath = req.originalUrl.split('?')[0];
+    if (
+        current.must_change_password &&
+        ![
+            '/api/auth/me',
+            '/api/auth/change-password',
+            '/api/auth/logout'
+        ].includes(authPath)
+    ) {
+        return res
+            .status(403)
+            .json({
+                error: 'You must change your password before continuing',
+                code: 'PASSWORD_CHANGE_REQUIRED'
+            });
+    }
     next();
 }
 
@@ -102,10 +124,15 @@ function requireAdmin(req, res, next) {
 
 function requirePermission(perm) {
     return (req, res, next) => {
-        if (!req.user) return res.status(401).json({ error: 'Access token required' });
+        if (!req.user)
+            return res.status(401).json({ error: 'Access token required' });
         if (req.user.role === 'admin') return next();
         if ((req.user.permissions || []).includes(perm)) return next();
-        return res.status(403).json({ error: 'You do not have permission to perform this action' });
+        return res
+            .status(403)
+            .json({
+                error: 'You do not have permission to perform this action'
+            });
     };
 }
 

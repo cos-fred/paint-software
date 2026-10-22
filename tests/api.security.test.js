@@ -48,7 +48,10 @@ describe('API security', { concurrency: 1 }, () => {
         assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
         adminToken = adminLogin.body.token;
 
-        const warehouses = await request(server, { path: '/api/warehouses', token: adminToken });
+        const warehouses = await request(server, {
+            path: '/api/warehouses',
+            token: adminToken
+        });
         assert.equal(warehouses.status, 200);
         warehouseId = warehouses.body[0].id;
 
@@ -56,9 +59,19 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/auth/register',
             token: adminToken,
-            body: { username: STAFF_USER, email: 'staff@example.com', password: STAFF_PASS, role: 'user' }
+            body: {
+                username: STAFF_USER,
+                email: 'staff@example.com',
+                password: STAFF_PASS,
+                role: 'user'
+            }
         });
         assert.equal(createdUser.status, 201, JSON.stringify(createdUser.body));
+        // These permission fixtures represent established users. First-login
+        // enforcement is exercised separately in api.launch.test.js.
+        getDb()
+            .prepare('UPDATE users SET must_change_password=0 WHERE id=?')
+            .run(createdUser.body.id);
 
         const staffLogin = await login(STAFF_USER, STAFF_PASS);
         assert.equal(staffLogin.status, 200);
@@ -83,18 +96,32 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/products',
             token: staffToken,
-            body: { name: 'Unauthorized Paint', unit_price: 10, warehouse_id: warehouseId, carton_stock: 5 }
+            body: {
+                name: 'Unauthorized Paint',
+                unit_price: 10,
+                warehouse_id: warehouseId,
+                carton_stock: 5
+            }
         });
         assert.equal(create.status, 403);
 
-        const count = getDb().prepare('SELECT COUNT(*) as n FROM products').get().n;
+        const count = getDb()
+            .prepare('SELECT COUNT(*) as n FROM products')
+            .get().n;
         assert.equal(count, 0);
 
         const adminCreate = await request(server, {
             method: 'POST',
             path: '/api/products',
             token: adminToken,
-            body: { name: 'Interior White', unit_price: 20, units_per_carton: 12, warehouse_id: warehouseId, cartons: 10, liter20_stock: 4 }
+            body: {
+                name: 'Interior White',
+                unit_price: 20,
+                units_per_carton: 12,
+                warehouse_id: warehouseId,
+                cartons: 10,
+                liter20_stock: 4
+            }
         });
         assert.equal(adminCreate.status, 201, JSON.stringify(adminCreate.body));
         productId = adminCreate.body.id;
@@ -111,7 +138,12 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: `/api/products/${productId}/stock-movement`,
             token: staffToken,
-            body: { movement_type: 'in', unit_type: 'carton', quantity: 99, warehouse_id: warehouseId }
+            body: {
+                movement_type: 'in',
+                unit_type: 'carton',
+                quantity: 99,
+                warehouse_id: warehouseId
+            }
         });
         assert.equal(stock.status, 403);
 
@@ -121,7 +153,9 @@ describe('API security', { concurrency: 1 }, () => {
             token: staffToken
         });
         assert.equal(del.status, 403);
-        const still = getDb().prepare('SELECT name FROM products WHERE id = ?').get(productId);
+        const still = getDb()
+            .prepare('SELECT name FROM products WHERE id = ?')
+            .get(productId);
         assert.equal(still.name, 'Interior White');
     });
 
@@ -133,7 +167,9 @@ describe('API security', { concurrency: 1 }, () => {
             body: {
                 warehouse_id: warehouseId,
                 payment_method: 'cash',
-                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 1 }
+                ]
             }
         });
         assert.equal(sale.status, 201, JSON.stringify(sale.body));
@@ -153,7 +189,9 @@ describe('API security', { concurrency: 1 }, () => {
             token: staffToken
         });
         assert.equal(cancel.status, 403);
-        const row = getDb().prepare('SELECT payment_status FROM sales WHERE id = ?').get(saleId);
+        const row = getDb()
+            .prepare('SELECT payment_status FROM sales WHERE id = ?')
+            .get(saleId);
         assert.equal(row.payment_status, 'completed');
     });
 
@@ -174,9 +212,11 @@ describe('API security', { concurrency: 1 }, () => {
         });
         assert.equal(pending.status, 400);
 
-        const before = getDb().prepare(
-            'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
-        ).get(productId, warehouseId).unit_stock;
+        const before = getDb()
+            .prepare(
+                'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
+            )
+            .get(productId, warehouseId).unit_stock;
 
         const cancel = await request(server, {
             method: 'DELETE',
@@ -184,11 +224,15 @@ describe('API security', { concurrency: 1 }, () => {
             token: adminToken
         });
         assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
-        const after = getDb().prepare(
-            'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
-        ).get(productId, warehouseId);
+        const after = getDb()
+            .prepare(
+                'SELECT unit_stock FROM product_stock WHERE product_id = ? AND warehouse_id = ?'
+            )
+            .get(productId, warehouseId);
         assert.equal(after.unit_stock, before + 12);
-        const saleRow = getDb().prepare('SELECT payment_status FROM sales WHERE id = ?').get(saleId);
+        const saleRow = getDb()
+            .prepare('SELECT payment_status FROM sales WHERE id = ?')
+            .get(saleId);
         assert.equal(saleRow.payment_status, 'cancelled');
 
         const cancelAgain = await request(server, {
@@ -206,7 +250,13 @@ describe('API security', { concurrency: 1 }, () => {
             token: staffToken,
             body: {
                 warehouse_id: warehouseId,
-                items: [{ product_id: productId, unit_type: 'carton); DROP TABLE products;--', quantity: 1 }]
+                items: [
+                    {
+                        product_id: productId,
+                        unit_type: 'carton); DROP TABLE products;--',
+                        quantity: 1
+                    }
+                ]
             }
         });
         assert.equal(res.status, 400);
@@ -222,14 +272,20 @@ describe('API security', { concurrency: 1 }, () => {
             headers: { Origin: 'https://app.example.com' }
         });
         assert.equal(allowed.status, 200);
-        assert.equal(allowed.headers['access-control-allow-origin'], 'https://app.example.com');
+        assert.equal(
+            allowed.headers['access-control-allow-origin'],
+            'https://app.example.com'
+        );
 
         const denied = await request(server, {
             path: '/api/health',
             headers: { Origin: 'https://evil.example' }
         });
         assert.equal(denied.status, 200);
-        assert.notEqual(denied.headers['access-control-allow-origin'], 'https://evil.example');
+        assert.notEqual(
+            denied.headers['access-control-allow-origin'],
+            'https://evil.example'
+        );
     });
 
     it('throttles repeated failed logins without blocking other API routes', async () => {
@@ -245,7 +301,10 @@ describe('API security', { concurrency: 1 }, () => {
         const health = await request(server, { path: '/api/health' });
         assert.equal(health.status, 200);
 
-        const products = await request(server, { path: '/api/products', token: adminToken });
+        const products = await request(server, {
+            path: '/api/products',
+            token: adminToken
+        });
         assert.equal(products.status, 200);
     });
 
@@ -254,9 +313,17 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/auth/register',
             token: adminToken,
-            body: { username: 'tempadmin', email: 'tempadmin@example.com', password: 'TempAdminPass9', role: 'admin' }
+            body: {
+                username: 'tempadmin',
+                email: 'tempadmin@example.com',
+                password: 'TempAdminPass9',
+                role: 'admin'
+            }
         });
         assert.equal(extra.status, 201, JSON.stringify(extra.body));
+        getDb()
+            .prepare('UPDATE users SET must_change_password=0 WHERE id=?')
+            .run(extra.body.id);
         const extraLogin = await login('tempadmin', 'TempAdminPass9');
         assert.equal(extraLogin.status, 200);
         const extraToken = extraLogin.body.token;
@@ -266,9 +333,18 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/products',
             token: extraToken,
-            body: { name: 'Temp Product', unit_price: 5, units_per_carton: 12, warehouse_id: warehouseId }
+            body: {
+                name: 'Temp Product',
+                unit_price: 5,
+                units_per_carton: 12,
+                warehouse_id: warehouseId
+            }
         });
-        assert.equal(beforeDemote.status, 201, JSON.stringify(beforeDemote.body));
+        assert.equal(
+            beforeDemote.status,
+            201,
+            JSON.stringify(beforeDemote.body)
+        );
 
         const demote = await request(server, {
             method: 'PUT',
@@ -282,7 +358,11 @@ describe('API security', { concurrency: 1 }, () => {
             method: 'POST',
             path: '/api/products',
             token: extraToken,
-            body: { name: 'Should Fail', unit_price: 5, warehouse_id: warehouseId }
+            body: {
+                name: 'Should Fail',
+                unit_price: 5,
+                warehouse_id: warehouseId
+            }
         });
         assert.equal(afterDemote.status, 401);
 
@@ -293,7 +373,10 @@ describe('API security', { concurrency: 1 }, () => {
             body: { is_active: 0 }
         });
         assert.equal(disable.status, 200);
-        const afterDisable = await request(server, { path: '/api/products', token: extraToken });
+        const afterDisable = await request(server, {
+            path: '/api/products',
+            token: extraToken
+        });
         assert.equal(afterDisable.status, 403);
 
         const change = await request(server, {
@@ -303,11 +386,17 @@ describe('API security', { concurrency: 1 }, () => {
             body: { current_password: STAFF_PASS, new_password: 'StaffPass456' }
         });
         assert.equal(change.status, 200, JSON.stringify(change.body));
-        const stale = await request(server, { path: '/api/products', token: staffToken });
+        const stale = await request(server, {
+            path: '/api/products',
+            token: staffToken
+        });
         assert.equal(stale.status, 401);
         const fresh = await login(STAFF_USER, 'StaffPass456');
         assert.equal(fresh.status, 200);
-        const ok = await request(server, { path: '/api/products', token: fresh.body.token });
+        const ok = await request(server, {
+            path: '/api/products',
+            token: fresh.body.token
+        });
         assert.equal(ok.status, 200);
     });
 
@@ -319,7 +408,9 @@ describe('API security', { concurrency: 1 }, () => {
             body: {
                 warehouse_id: warehouseId,
                 payment_method: 'cash',
-                items: [{ product_id: productId, unit_type: 'carton', quantity: 2 }]
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 2 }
+                ]
             }
         });
         assert.equal(sale.status, 201, JSON.stringify(sale.body));
@@ -346,7 +437,9 @@ describe('API security', { concurrency: 1 }, () => {
             token: adminToken,
             body: {
                 sale_id: returnSaleId,
-                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 1 }
+                ]
             }
         });
         assert.equal(firstReturn.status, 201, JSON.stringify(firstReturn.body));
@@ -357,10 +450,16 @@ describe('API security', { concurrency: 1 }, () => {
             token: adminToken,
             body: {
                 sale_id: returnSaleId,
-                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 1 }
+                ]
             }
         });
-        assert.equal(secondReturn.status, 201, JSON.stringify(secondReturn.body));
+        assert.equal(
+            secondReturn.status,
+            201,
+            JSON.stringify(secondReturn.body)
+        );
 
         const overReturn = await request(server, {
             method: 'POST',
@@ -368,7 +467,9 @@ describe('API security', { concurrency: 1 }, () => {
             token: adminToken,
             body: {
                 sale_id: returnSaleId,
-                items: [{ product_id: productId, unit_type: 'carton', quantity: 1 }]
+                items: [
+                    { product_id: productId, unit_type: 'carton', quantity: 1 }
+                ]
             }
         });
         assert.equal(overReturn.status, 400, JSON.stringify(overReturn.body));
@@ -382,19 +483,36 @@ describe('API security', { concurrency: 1 }, () => {
         });
         assert.equal(del.status, 200, JSON.stringify(del.body));
 
-        const product = getDb().prepare('SELECT id, is_active FROM products WHERE id = ?').get(productId);
+        const product = getDb()
+            .prepare('SELECT id, is_active FROM products WHERE id = ?')
+            .get(productId);
         assert.ok(product, 'product should still exist after archive');
         assert.equal(product.is_active, 0);
 
-        const saleItems = getDb().prepare('SELECT COUNT(*) as n FROM sale_items WHERE product_id = ?').get(productId).n;
+        const saleItems = getDb()
+            .prepare(
+                'SELECT COUNT(*) as n FROM sale_items WHERE product_id = ?'
+            )
+            .get(productId).n;
         assert.ok(saleItems > 0, 'sale item history should be preserved');
 
-        const movements = getDb().prepare('SELECT COUNT(*) as n FROM stock_movements WHERE product_id = ?').get(productId).n;
+        const movements = getDb()
+            .prepare(
+                'SELECT COUNT(*) as n FROM stock_movements WHERE product_id = ?'
+            )
+            .get(productId).n;
         assert.ok(movements > 0, 'stock movement history should be preserved');
 
-        const list = await request(server, { path: '/api/products', token: adminToken });
+        const list = await request(server, {
+            path: '/api/products',
+            token: adminToken
+        });
         assert.equal(list.status, 200);
-        assert.equal(list.body.some((p) => p.id === productId), false, 'archived product hidden from listing');
+        assert.equal(
+            list.body.some((p) => p.id === productId),
+            false,
+            'archived product hidden from listing'
+        );
 
         const again = await request(server, {
             method: 'DELETE',
@@ -427,7 +545,7 @@ describe('API security', { concurrency: 1 }, () => {
             token: adminToken,
             body: { value: 'usd' }
         });
-        assert.equal(lower.status, 200, JSON.stringify(lower.body));
-        assert.equal(lower.body.value, 'USD');
+        assert.equal(lower.status, 400, JSON.stringify(lower.body));
+        assert.match(lower.body.error, /Currency cannot change/);
     });
 });

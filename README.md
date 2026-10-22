@@ -1,260 +1,73 @@
-# Paint Software - Inventory & Sales Tracker
+# VEEMENZ — Paint Inventory & Sales
 
-A comprehensive stock and inventory management system built for paint businesses with support for units, cartons (12 units), and 20L containers.
+A small-business web application using Node.js 24 LTS, Express, SQLite and a plain JavaScript browser interface. Run one application instance with the SQLite file on persistent local/attached storage. Staff use the same website through their browsers.
 
-## Features
+## Implemented features
 
-### Product Management
-- **Multi-unit pricing**: Unit price, Carton price (12× unit), 20L container price
-- **Stock tracking**: Separate inventory for units, cartons, and 20L containers
-- **Low stock alerts**: Configurable thresholds with automatic notifications
-- **Categories**: Organize products by category
-- **Stock movements**: Full audit trail of all inventory changes
+- Products with unit, automatic/manual carton and 20L prices.
+- Warehouse stock, adjustments, transfers and low-stock alerts.
+- Sales with per-item markup/discount, optional API order discounts, cash/card/transfer/mobile-money labels, and paid/unpaid status.
+- Item returns, complete refunds and cancellation with stock reversal and credit history.
+- Customers, searchable sales/customer pickers, and paginated history lists.
+- Original receipts with payment status; reports for inventory selling value, sales before returns, returns/refunds and net revenue.
+- Administrator/staff roles and delegated product, transfer and return permissions.
+- Live refresh notifications, forced first-login password changes, immediate session revocation, settings and audit history.
+- Hourly verified backups, optional encrypted daily independent copies, backup health and restore-to-new-file tooling.
 
-### Customer Management
-- Complete customer profiles (name, contact, address, tax ID)
-- Purchase history tracking
-- Total spent and average purchase analytics
+This version does not implement product categories, supplier purchase orders, accounting profit, partial payments, a payment gateway, or offline synchronization. Payment methods and credits are bookkeeping records; the app does not move money. SQLite is the implemented database; PostgreSQL would require a separate migration project.
 
-### Sales & Receipts
-- **Multi-unit sales**: Sell by unit, carton (configurable units per carton), or 20L container
-- **Automatic pricing**: Carton = units-per-carton × unit price, 20L = custom price
-- **Professional receipts**: Company branding, itemized details, markup and discounts
-- **Payment tracking**: Cash, card, transfer, credit with status management
-- **Walk-in customers**: Quick sales without customer selection
+## Local setup
 
-### Purchase Orders
-- Create orders for suppliers
-- Receive stock with automatic inventory updates
-- Track order status (pending, ordered, partial, received, cancelled)
+1. Install Node.js 24 LTS (see .nvmrc). Keep development, tests and production on this version.
+2. Run npm ci from this directory.
+3. Copy .env.example to .env and set ADMIN_PASSWORD to a strong password. Set JWT_SECRET to a strong random value, especially outside local development.
+4. Run npm start, then open http://localhost:3000.
 
-### Reports & Analytics
-- **Inventory value**: Total worth by product and category
-- **Sales summary**: Revenue, markup, discounts, average sale
-- **Top products**: Best sellers by quantity and revenue
-- **Top customers**: Highest spending customers
-- **Daily sales chart**: 30-day visual revenue trend
+There is no default administrator password. ADMIN_PASSWORD creates the initial admin only; later starts do not reset it. A new database creates tables, defaults and two sample warehouses, but contains no products, customers or sales. Existing databases are migrated in place and business records are preserved. Back up an existing database before upgrading. Deployment is documented separately and has not been performed as part of these fixes.
 
-### Alerts & Notifications
-- Low stock warnings (configurable threshold)
-- Severity levels (warning, danger, info)
-- Mark as read / delete functionality
+## Inventory and financial rules
 
-### Security
-- **JWT authentication** with secure password hashing (bcrypt)
-- **Role-based access**: Admin and User roles
-- **Rate limiting** (general API + stricter login limiter)
-- **Helmet.js** security headers
-- **CORS** limited to configured origins (wildcard forbidden in production)
-- **Input validation** on all endpoints
-- **No default administrator password**
+Cartons and individual units share product_stock.unit_stock. For a twelve-unit carton, selling two cartons deducts 24 units. Twenty-litre containers use their own pool. carton_stock exists only for compatibility with legacy migrations.
 
-### Online Access Ready
-- RESTful API for frontend integration
-- Environment-based configuration
-- Easy deployment to cloud platforms (Railway, Render, Heroku, etc.)
-- PostgreSQL migration ready (currently uses SQLite)
+New monetary calculations use integer cents. Prices, markup and discounts accept at most two decimal places. Line and sale amounts are bounded to prevent overflow. Existing REAL currency columns remain for API compatibility; sale_items.net_total_cents and sale_returns.amount_cents store the definitive line allocations and credits.
 
-## Quick Start
+An order discount applies to the after-item-discount subtotal, before markup. It is distributed proportionally across those line amounts using largest-remainder allocation. Selected-line partial returns use cumulative rounding, so a full return credits exactly the line's original net amount. A legacy product/unit return request allocates quantities to remaining sale lines in original order; new clients should always send sale_item_id.
 
-### Prerequisites
-- Node.js 18+ installed
+Pending sales deduct stock immediately. Marking paid does not deduct it again. Item returns reduce the remaining quantity and net sale value while preserving the original receipt. Full refund/cancellation restores and credits only quantities not already returned. Terminal statuses cannot be reversed or repeated. Cancelled sales are excluded from sales reports; refunded sales remain in sales-before-returns and are offset by their credits.
 
-### Installation
+Reports attribute returns to the original sale's date, rather than the day the return was processed. Return history retains its actual timestamps. The reported unit quantity includes units inside cartons; 20L quantities are separate. Inventory value uses selling prices, not purchase cost. Currency is locked once a sale exists so old receipts cannot silently change currency.
 
-```bash
-cd "paint software"
-npm install
-npm start
-```
+POST /api/sales and POST /api/returns accept an Idempotency-Key header (16–128 letters/digits/underscores/hyphens). A successful retry with the same user, operation, key and payload returns the original result with HTTP 200; creation returns 201. Reusing a key for different data returns 409. Keys and results are committed in the same transaction as stock changes. The browser retains unresolved sale attempts in session storage and exposes Retry pending sale. Do not clear browser/session storage to work around an unresolved request; resolve it first.
 
-The server will start at `http://localhost:3000`
+## Users and permissions
 
-### First-run administrator
+Admins manage settings, warehouses, users and cancellations/refunds. Staff can read business records, create sales/customers and mark pending sales paid. manage_products, manage_transfers and manage_returns grant their named mutations; default new staff have manage_returns. Explicitly selecting no permissions removes all optional grants. Buttons follow the same effective permissions returned by /api/auth/me.
 
-There is **no default password**. On a fresh database, set `ADMIN_PASSWORD` (12+ characters) in `.env` before starting. The account username is `admin`. Later startups never reset that password.
+New/reset-password accounts must change their password before accessing business endpoints or live updates. A password change, role/permission change, account disable, explicit session revocation or logout invalidates existing sessions. Logout signs that user out on all devices. HTTP requests reload current account state; live sessions are checked before broadcasts and disconnected on revocation or token expiry.
 
-If the database already exists, start the app as usual and log in with the current administrator credentials.
+## Tests
 
-## Configuration
+- npm test — unit, API, migration, concurrency, session and backup recovery tests, all using temporary databases.
+- npm run test:browser — real-browser workflows on an isolated test server at 127.0.0.1:39173. On Windows this uses installed Microsoft Edge. Elsewhere run npx playwright install chromium first.
+- npm run test:all — both suites.
+- npm audit --omit=dev — production dependency advisories.
 
-Copy `.env.example` to `.env` and fill in real values. Do not commit `.env`.
+GitHub Actions installs Node 24, performs a clean locked install and audit, and runs both suites. Test credentials are fixtures only and never seed the normal application. ExcelJS's nested UUID dependency is explicitly overridden to patched 11.1.1; workbook export is covered by an API round-trip test.
 
-```env
-PORT=3000
-NODE_ENV=development
-JWT_SECRET=
-ADMIN_PASSWORD=
-DB_PATH=./paint_inventory.db
-# CORS_ORIGIN=http://localhost:3000
-```
+## Backups and recovery
 
-Generate a JWT secret:
+Read docs/RECOVERY.md. Hourly snapshots are taken with SQLite's backup API and verified using quick_check, foreign keys and required tables. Default retention is 168 hourly files. The admin Settings screen shows the last verified local backup, last independent copy, missing configuration and failures. Repeated failures create one visible system alert until a successful recovery.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-```
+Independent storage must be configured separately; a folder on the same server is not off-server protection. No remote account or backup destination is activated by the code. BACKUP_ENCRYPTION_KEY is mandatory when a mirror or remote endpoint is enabled. Preserve that key separately from the backups.
 
-### CORS
+The reset endpoint is disabled in production unless ALLOW_SYSTEM_RESET=true. In allowed environments, only the primary admin with the correct current password can reset. A verified snapshot is required first; mutations are temporarily blocked during the backup/reset, and deletion plus default reseeding is atomic. Reset keeps the primary admin but clears business data and other users. Never enable this casually on a live business system.
 
-- Leave `CORS_ORIGIN` empty when the browser loads the UI from this same server (same-origin).
-- For a separate frontend, set explicit origins, e.g. `https://app.example.com`.
-- `CORS_ORIGIN=*` is allowed only in development and is rejected in production.
+## API and operational notes
 
-### Roles
+Routes are mounted under /api: auth, auth/users, products, customers, sales, transfers, returns, reports, alerts, audit, settings and system. List endpoints use limit/offset; limits are bounded to 500. Product listing is an unpaginated active catalogue, used for product selection. Search terms and filters are parameterized.
 
-Server-side permission matrix:
+PUT /api/settings accepts {values:{key:value,...}} and validates the entire settings group before writing anything. Single-key updates remain supported. PUT /api/auth/profile saves an email. GET /api/system/status reports backup health and reset availability to administrators. POST /api/system/backup creates a verified snapshot; GET /api/system/backup/download downloads one. GET /api/health returns 503 if the database cannot be queried or free storage is below 50MB; it exposes no secrets or filesystem paths.
 
-| Action | Authenticated staff (`user`) | Administrator |
-| --- | --- | --- |
-| Create sales, view products/sales/customers | Yes | Yes |
-| Create/update customers | Yes | Yes |
-| Create/update/delete products, stock movements, transfers, returns | No | Yes |
-| Change payment status or cancel a sale | No | Yes |
-| User, settings, and audit management | No | Yes |
+Webhook destinations are checked for public IPv4/IPv6 addresses, all DNS answers are validated, the connection is pinned to a validated address, credentials in URLs are forbidden, timeouts are applied and redirects are rejected. WEBHOOK_ALLOWED_HOSTS optionally narrows outbound destinations further; it applies to notification webhooks and HTTP backup uploads. Use HTTPS endpoints.
 
-Authorization is enforced on the server. Hiding buttons in the UI is not sufficient.
-
-Tokens last 24 hours by default (`JWT_EXPIRES_IN`). Every request re-checks the current role, active flag, and token version. Password changes, role changes, and disabling an account invalidate existing sessions immediately.
-
-### Login rate limiting
-
-Failed logins are limited separately from the general API (default 10 failures / 15 minutes per IP). Behind a reverse proxy set `TRUST_PROXY=1` so the limiter uses `X-Forwarded-For`.
-
-### JWT secret rotation
-
-Change `JWT_SECRET` and restart the process. All outstanding tokens stop verifying. Users must log in again. Rotate immediately if a secret may have been committed, logged, or shared.
-
-### Production Deployment
-
-1. Set a strong random `JWT_SECRET` (32+ characters, not a placeholder)
-2. Set `ADMIN_PASSWORD` for first run only, then store it in a password manager
-3. Set `NODE_ENV=production`
-4. Set `CORS_ORIGIN` to your real https origin(s), never `*`
-5. Set `TRUST_PROXY=1` behind Railway/Render/nginx
-6. Enable HTTPS at the reverse proxy
-7. Keep the SQLite file on a persistent volume and restrict file permissions
-
-## Database Migration (SQLite → PostgreSQL)
-
-For production, migrate to PostgreSQL:
-
-1. Install `pg` package: `npm install pg`
-2. Update `database.js` to use `pg` instead of `sqlite3`
-3. Run migration script to transfer data
-4. Update connection pool settings
-
-## API Endpoints
-
-### Authentication
-- `POST /api/auth/login` - Login
-- `POST /api/auth/register` - Register (admin only)
-- `GET /api/auth/me` - Current user
-- `PUT /api/auth/change-password` - Change password
-- `GET /api/auth/users` - List users (admin)
-- `POST /api/auth/users` - Create user (admin)
-- `PUT /api/auth/users/:id` - Update user (admin)
-- `DELETE /api/auth/users/:id` - Delete user (admin)
-
-### Products
-- `GET /api/products` - List products (with filters)
-- `GET /api/products/categories` - List categories
-- `GET /api/products/low-stock` - Low stock products
-- `GET /api/products/:id` - Get product
-- `POST /api/products` - Create product
-- `PUT /api/products/:id` - Update product
-- `DELETE /api/products/:id` - Delete product
-- `POST /api/products/:id/stock-movement` - Record stock movement
-- `GET /api/products/:id/movements` - Stock movement history
-
-### Customers
-- `GET /api/customers` - List customers
-- `GET /api/customers/:id` - Get customer
-- `GET /api/customers/:id/purchases` - Customer purchase history
-- `POST /api/customers` - Create customer
-- `PUT /api/customers/:id` - Update customer
-- `DELETE /api/customers/:id` - Delete customer
-
-### Sales
-- `GET /api/sales` - List sales (with filters)
-- `GET /api/sales/:id` - Get sale with items
-- `GET /api/sales/:id/receipt` - Generate receipt
-- `POST /api/sales` - Create sale
-- `PUT /api/sales/:id/payment-status` - Update payment status
-- `DELETE /api/sales/:id` - Delete sale (restores stock)
-
-### Purchase Orders
-- `GET /api/purchase-orders` - List purchase orders
-- `GET /api/purchase-orders/:id` - Get PO with items
-- `POST /api/purchase-orders` - Create PO
-- `PUT /api/purchase-orders/:id/receive` - Receive PO (updates stock)
-- `PUT /api/purchase-orders/:id/status` - Update status
-- `DELETE /api/purchase-orders/:id` - Delete PO
-
-### Reports
-- `GET /api/reports/inventory` - Inventory summary & value
-- `GET /api/reports/inventory/value-by-category` - Value by category
-- `GET /api/reports/sales/summary` - Sales summary
-- `GET /api/reports/sales/by-product` - Top products
-- `GET /api/reports/sales/by-customer` - Top customers
-- `GET /api/reports/sales/daily` - Daily sales (last N days)
-- `GET /api/reports/stock-movements` - Stock movement history
-
-### Alerts
-- `GET /api/alerts` - List alerts
-- `GET /api/alerts/unread-count` - Unread count
-- `PUT /api/alerts/:id/read` - Mark as read
-- `PUT /api/alerts/read-all` - Mark all as read
-- `DELETE /api/alerts/:id` - Delete alert
-
-### Settings
-- `GET /api/settings` - List settings (admin)
-- `GET /api/settings/:key` - Get setting
-- `PUT /api/settings/:key` - Update setting (admin)
-- `DELETE /api/settings/:key` - Delete setting (admin)
-
-## Recommended Features for Future Enhancement
-
-1. **Barcode/QR Code Scanning** - Quick product entry and sales
-2. **Email Notifications** - Low stock alerts via email
-3. **Multi-location Support** - Warehouse/store inventory separation
-4. **Supplier Management** - Dedicated supplier profiles
-5. **Expense Tracking** - Operational costs and profit margins
-6. **Customer Portal** - Online ordering for repeat customers
-7. **Mobile App** - React Native / PWA for on-the-go access
-8. **Advanced Analytics** - Seasonal trends, forecasting
-9. **Integration APIs** - Accounting software (QuickBooks, Xero)
-10. **Backup/Restore** - Automated database backups
-
-## File Structure
-
-```
-paint software/
-├── server.js              # Main entry point
-├── database.js            # SQLite initialization & schema
-├── auth.js                # JWT authentication utilities
-├── .env                   # Environment configuration
-├── package.json
-├── routes/
-│   ├── auth.js            # Authentication routes
-│   ├── products.js        # Product management
-│   ├── customers.js       # Customer management
-│   ├── sales.js           # Sales & receipts
-│   ├── purchaseOrders.js  # Purchase orders
-│   ├── reports.js         # Analytics & reports
-│   ├── alerts.js          # Alert management
-│   ├── settings.js        # System settings
-│   └── users.js           # User management (admin)
-└── public/
-    ├── index.html         # Main HTML
-    ├── styles.css         # Complete styling
-    └── app.js             # Frontend application
-```
-
-## License
-
-MIT License - Feel free to modify and distribute.
-
-## Support
-
-For issues or feature requests, please check the codebase or create an issue in your repository.
+Keep .env, database/WAL files, encryption keys, backups and test artifacts out of Git. The Dockerfile excludes test output, test databases and local secrets. Source rollback does not roll the database back: use a verified compatible backup when reverting schema changes.
