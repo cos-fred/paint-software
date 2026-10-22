@@ -1150,7 +1150,7 @@ function updateSaleItemPrice() {
 }
 
 function updateSaleSummary() {
-    let subtotal = 0;
+    let gross = 0;
     let markup = 0;
     let totalDiscount = 0;
     document.querySelectorAll('.sale-item-row').forEach(row => {
@@ -1164,14 +1164,27 @@ function updateSaleSummary() {
         const lineGross = price * qty;
         const lineTotal = Math.max(0, lineGross - lineDiscount);
         row.querySelector('.sale-item-total').textContent = formatCurrency(lineTotal + lineMarkup);
-        subtotal += lineTotal;
+        gross += lineGross;
         markup += lineMarkup;
         totalDiscount += lineDiscount;
     });
+    const subtotal = Math.max(0, gross - totalDiscount);
     const total = Math.max(0, subtotal + markup);
-    document.getElementById('sale-subtotal').textContent = formatCurrency(subtotal);
+
+    document.getElementById('sale-subtotal').textContent = formatCurrency(gross);
     document.getElementById('sale-markup').textContent = formatCurrency(markup);
     document.getElementById('sale-total').textContent = formatCurrency(total);
+
+    const discountRow = document.getElementById('sale-discount-row');
+    const discountEl = document.getElementById('sale-discount');
+    if (discountRow && discountEl) {
+        if (totalDiscount > 0) {
+            discountEl.textContent = '-' + formatCurrency(totalDiscount);
+            discountRow.style.display = '';
+        } else {
+            discountRow.style.display = 'none';
+        }
+    }
 }
 
 async function handleSaleSubmit(e) {
