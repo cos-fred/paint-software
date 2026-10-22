@@ -4,7 +4,7 @@ const { getDb } = require('../database');
 const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
 const { checkLowStock } = require('../services/low-stock');
-const { stockColumn, toUnits, splitUnits, UNIT_TYPES } = require('../lib/stock');
+const { stockColumn, toUnits, splitUnits, getProductStockStatus, UNIT_TYPES } = require('../lib/stock');
 const { ClientError, sendSafeError } = require('../lib/errors');
 const { parsePositiveInteger, parseNonNegativeInteger, parseNonNegativeNumber, round2, parseLimit, parseOffset } = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
@@ -44,12 +44,19 @@ router.get('/', (req, res) => {
 
         let rows = db.prepare(query).all(...params);
 
+        rows.forEach((p) => {
+            const units = warehouse_id ? p.warehouse_unit_stock : p.total_unit_stock;
+            const liter20 = warehouse_id ? p.warehouse_liter20_stock : p.total_liter20_stock;
+            const status = getProductStockStatus(p, units, liter20);
+            p.is_carton_low = status.isCartonLow;
+            p.is_liter20_low = status.isLiter20Low;
+            p.is_low_stock = status.isLow;
+            p.low_stock_reason = status.lowStockReason;
+            p.low_stock_label = status.lowStockLabel;
+        });
+
         if (low_stock === 'true') {
-            rows = rows.filter((p) => {
-                const units = warehouse_id ? p.warehouse_unit_stock : p.total_unit_stock;
-                const liter20 = warehouse_id ? p.warehouse_liter20_stock : p.total_liter20_stock;
-                return units <= p.low_stock_threshold || liter20 <= p.low_stock_threshold;
-            });
+            rows = rows.filter((p) => p.is_low_stock);
         }
 
         res.json(rows);
@@ -71,8 +78,18 @@ router.get('/low-stock', (req, res) => {
         `;
         const params = [];
         if (warehouse_id) { query += ' AND ps.warehouse_id = ?'; params.push(warehouse_id); }
-        query += ' GROUP BY p.id HAVING COALESCE(SUM(ps.unit_stock), 0) <= p.low_stock_threshold OR COALESCE(SUM(ps.liter20_stock), 0) <= p.low_stock_threshold ORDER BY p.name';
-        res.json(db.prepare(query).all(...params));
+        query += ' GROUP BY p.id ORDER BY p.name';
+        const rows = db.prepare(query).all(...params);
+        const lowStockRows = rows.map((p) => {
+            const status = getProductStockStatus(p, p.total_unit_stock, p.total_liter20_stock);
+            p.is_carton_low = status.isCartonLow;
+            p.is_liter20_low = status.isLiter20Low;
+            p.is_low_stock = status.isLow;
+            p.low_stock_reason = status.lowStockReason;
+            p.low_stock_label = status.lowStockLabel;
+            return p;
+        }).filter((p) => p.is_low_stock);
+        res.json(lowStockRows);
     } catch (err) {
         sendSafeError(res, err, '[products]');
     }

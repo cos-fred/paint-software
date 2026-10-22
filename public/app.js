@@ -70,6 +70,46 @@ function splitStockUnits(totalUnits, unitsPerCarton) {
     return { cartons: Math.floor(totalUnits / per), units: totalUnits % per };
 }
 
+function getProductStockStatus(p, unitStock = 0, liter20Stock = 0) {
+    const unitsPerCarton = p.units_per_carton || 0;
+    const threshold = p.low_stock_threshold ?? 10;
+    const split = splitStockUnits(unitStock, unitsPerCarton);
+
+    // If product has cartons defined (> 0), carton stock is the number of full cartons.
+    // If not, it falls back to raw units.
+    const cartonStock = unitsPerCarton > 0 ? split.cartons : unitStock;
+    const isCartonLow = cartonStock <= threshold;
+
+    const has20L = (p.liter20_price > 0 || liter20Stock > 0);
+    const isLiter20Low = has20L && (liter20Stock <= threshold);
+
+    const isLow = isCartonLow || isLiter20Low;
+
+    let lowStockLabel = 'OK';
+    let lowStockReason = null;
+    if (isCartonLow && isLiter20Low) {
+        lowStockReason = 'both';
+        lowStockLabel = unitsPerCarton > 0 ? 'Low on Cartons & 20L' : 'Low on Units & 20L';
+    } else if (isCartonLow) {
+        lowStockReason = 'carton';
+        lowStockLabel = unitsPerCarton > 0 ? 'Low on Cartons' : 'Low on Units';
+    } else if (isLiter20Low) {
+        lowStockReason = 'liter20';
+        lowStockLabel = 'Low on 20L';
+    }
+
+    return {
+        cartons: split.cartons,
+        units: split.units,
+        cartonStock,
+        isCartonLow,
+        isLiter20Low,
+        isLow,
+        lowStockReason,
+        lowStockLabel
+    };
+}
+
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -582,11 +622,21 @@ async function loadDashboard() {
         const lowStockItems = inventory.low_stock_items || [];
         document.getElementById('low-stock-list').innerHTML = lowStockItems.length > 0
             ? lowStockItems.slice(0, 5).map(p => {
-                const split = splitStockUnits(p.unit_stock, p.units_per_carton);
+                const status = getProductStockStatus(p, p.unit_stock, p.liter20_stock);
+                const badgeText = p.low_stock_label || status.lowStockLabel;
                 return `
-                <div class="alert-item alert-warning">
-                    <strong>${escapeHtml(p.name)}</strong> — Cartons: ${split.cartons}, Units: ${split.units}, 20L: ${p.liter20_stock}
-                    <small>(Threshold: ${p.low_stock_threshold})</small>
+                <div class="alert-item alert-warning" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; margin-bottom: 8px;">
+                    <div>
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <strong>${escapeHtml(p.name)}</strong>
+                            <span class="status-badge status-danger">${escapeHtml(badgeText)}</span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+                            Cartons: <strong class="${status.isCartonLow ? 'stock-low' : 'stock-ok'}">${status.cartons}</strong> (${status.units} loose units) | 
+                            20L: <strong class="${status.isLiter20Low ? 'stock-low' : 'stock-ok'}">${p.liter20_stock}</strong>
+                            <span style="margin-left: 6px;">(Threshold: ${p.low_stock_threshold})</span>
+                        </div>
+                    </div>
                 </div>`;
             }).join('')
             : '<div class="empty-state"><h4>All Good</h4><p>No low stock alerts</p></div>';
@@ -653,22 +703,23 @@ async function loadStock() {
         tbody.innerHTML = products.map(p => {
             const unitStock = p.warehouse_unit_stock ?? p.total_unit_stock ?? 0;
             const liter20Stock = p.warehouse_liter20_stock ?? p.total_liter20_stock ?? 0;
-            const split = splitStockUnits(unitStock, p.units_per_carton);
+            const status = getProductStockStatus(p, unitStock, liter20Stock);
             const totalValue = (p.unit_price * unitStock) + (p.liter20_price * liter20Stock);
-            const isLow = unitStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
-            const cls = (stock) => stock <= p.low_stock_threshold ? 'stock-low' : (stock === 0 ? 'stock-warning' : 'stock-ok');
-            return `<tr${isLow ? ' class="low-stock-row"' : ''}>
+            const badgeClass = status.isLow ? 'status-danger' : 'status-completed';
+            const badgeText = status.isLow ? status.lowStockLabel : 'OK';
+
+            return `<tr${status.isLow ? ' class="low-stock-row"' : ''}>
                 <td><strong>${escapeHtml(p.name)}</strong><br><small style="color:var(--text-muted)">${escapeHtml(p.description || '—')}</small></td>
                 <td>${escapeHtml(whName)}</td>
                 <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${cls(split.cartons)}">${split.cartons}</td>
-                <td class="${cls(split.units)}">${split.units}</td>
-                <td class="${cls(liter20Stock)}">${liter20Stock}</td>
+                <td class="${status.isCartonLow ? 'stock-low' : 'stock-ok'}">${status.cartons}</td>
+                <td class="stock-ok">${status.units}</td>
+                <td class="${status.isLiter20Low ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
-                <td><span class="status-badge ${isLow ? 'status-pending' : 'status-completed'}">${isLow ? 'Low Stock' : 'OK'}</span></td>
+                <td><span class="status-badge ${badgeClass}">${escapeHtml(badgeText)}</span></td>
                 <td><button class="action-btn edit" data-action="open-stock-adjust" data-id="${p.id}" data-name="${escapeAttr(p.name)}">⚙️ Adjust</button></td>
             </tr>`;
         }).join('');
@@ -704,6 +755,10 @@ function openStockAdjustModal(productId, productName) {
     document.getElementById('stock-adjust-product-name').value = productName;
     document.getElementById('stock-adjust-quantity').value = '';
     document.getElementById('stock-adjust-notes').value = '';
+    const currentWh = document.getElementById('stock-warehouse-filter')?.value;
+    if (currentWh && document.getElementById('stock-adjust-warehouse')) {
+        document.getElementById('stock-adjust-warehouse').value = currentWh;
+    }
     loadCurrentStockForAdjustment();
     showModal('stock-adjust-modal');
 }
@@ -712,13 +767,50 @@ async function loadCurrentStockForAdjustment() {
     const productId = document.getElementById('stock-adjust-product-id').value;
     const warehouseId = document.getElementById('stock-adjust-warehouse').value;
     const unitType = document.getElementById('stock-adjust-unit-type').value;
-    if (!productId || !warehouseId) { document.getElementById('stock-adjust-current').value = ''; return; }
+    const currentInput = document.getElementById('stock-adjust-current');
+    const hintEl = document.getElementById('stock-adjust-hint');
+
+    if (!productId || !warehouseId) {
+        if (currentInput) currentInput.value = '';
+        if (hintEl) hintEl.textContent = '';
+        return;
+    }
+
     try {
         const res = await fetchWithAuth(`${API_BASE}/products/${productId}?warehouse_id=${warehouseId}`);
         const product = await res.json();
-        const fieldMap = { unit: 'warehouse_unit_stock', carton: 'warehouse_unit_stock', liter20: 'warehouse_liter20_stock' };
-        document.getElementById('stock-adjust-current').value = product[fieldMap[unitType]] ?? 0;
-    } catch (err) { console.error(err); }
+        const unitsPerCarton = product.units_per_carton || 0;
+        const rawUnits = product.warehouse_unit_stock ?? 0;
+        const liter20Stock = product.warehouse_liter20_stock ?? 0;
+
+        if (unitType === 'carton') {
+            if (unitsPerCarton > 0) {
+                const cartons = Math.floor(rawUnits / unitsPerCarton);
+                const loose = rawUnits % unitsPerCarton;
+                const cartonLabel = cartons === 1 ? '1 carton' : `${cartons} cartons`;
+                currentInput.value = loose > 0 ? `${cartonLabel} (${loose} loose unit${loose === 1 ? '' : 's'})` : cartonLabel;
+                if (hintEl) hintEl.textContent = `Total units: ${rawUnits} (${unitsPerCarton} units/carton)`;
+            } else {
+                currentInput.value = `${rawUnits} units`;
+                if (hintEl) hintEl.textContent = '';
+            }
+        } else if (unitType === 'unit') {
+            if (unitsPerCarton > 0) {
+                const cartons = Math.floor(rawUnits / unitsPerCarton);
+                const loose = rawUnits % unitsPerCarton;
+                currentInput.value = `${rawUnits} unit${rawUnits === 1 ? '' : 's'}`;
+                if (hintEl) hintEl.textContent = `Equivalent to: ${cartons} carton${cartons === 1 ? '' : 's'} + ${loose} loose unit${loose === 1 ? '' : 's'}`;
+            } else {
+                currentInput.value = `${rawUnits} unit${rawUnits === 1 ? '' : 's'}`;
+                if (hintEl) hintEl.textContent = '';
+            }
+        } else if (unitType === 'liter20') {
+            currentInput.value = `${liter20Stock} container${liter20Stock === 1 ? '' : 's'}`;
+            if (hintEl) hintEl.textContent = '20-liter containers';
+        }
+    } catch (err) {
+        console.error(err);
+    }
 }
 
 async function handleStockAdjustSubmit(e) {
@@ -740,7 +832,7 @@ async function handleStockAdjustSubmit(e) {
         if (!res.ok) throw new Error(result.error);
         showToast('Stock adjusted successfully', 'success');
         closeModal('stock-adjust-modal');
-        loadStock(); loadDashboard();
+        loadStock(); loadDashboard(); loadProducts(); loadAlerts();
     } catch (err) { showToast(err.message, 'error'); }
 }
 
@@ -768,18 +860,22 @@ async function loadProducts() {
         tbody.innerHTML = products.map(p => {
             const unitStock = p.total_unit_stock ?? 0;
             const liter20Stock = p.total_liter20_stock ?? 0;
-            const split = splitStockUnits(unitStock, p.units_per_carton);
+            const status = getProductStockStatus(p, unitStock, liter20Stock);
             const totalValue = (p.unit_price * unitStock) + (p.liter20_price * liter20Stock);
-            const isLow = unitStock <= p.low_stock_threshold || liter20Stock <= p.low_stock_threshold;
-            return `<tr${isLow ? ' class="low-stock-row"' : ''}>
-                <td><strong>${escapeHtml(p.name)}</strong>${p.description ? `<br><small style="color:var(--text-muted)">${escapeHtml(p.description)}</small>` : ''}</td>
+
+            return `<tr${status.isLow ? ' class="low-stock-row"' : ''}>
+                <td>
+                    <strong>${escapeHtml(p.name)}</strong>
+                    ${status.isLow ? `<span class="status-badge status-danger" style="margin-left: 6px; font-size: 0.72rem; padding: 2px 6px;">${escapeHtml(status.lowStockLabel)}</span>` : ''}
+                    ${p.description ? `<br><small style="color:var(--text-muted)">${escapeHtml(p.description)}</small>` : ''}
+                </td>
                 <td>${escapeHtml(p.sku || '—')}</td>
                 <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
                 <td>${formatCurrency(p.liter20_price)}</td>
-                <td class="${split.cartons <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${split.cartons}</td>
-                <td class="${split.units <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${split.units}</td>
-                <td class="${liter20Stock <= p.low_stock_threshold ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
+                <td class="${status.isCartonLow ? 'stock-low' : 'stock-ok'}">${status.cartons}</td>
+                <td class="stock-ok">${status.units}</td>
+                <td class="${status.isLiter20Low ? 'stock-low' : 'stock-ok'}">${liter20Stock}</td>
                 <td>${p.low_stock_threshold}</td>
                 <td class="total-value-col"><strong>${formatCurrency(totalValue)}</strong></td>
                 <td>

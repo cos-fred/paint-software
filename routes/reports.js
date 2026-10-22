@@ -2,6 +2,7 @@ const express = require('express');
 const { getDb } = require('../database');
 const { authenticateToken } = require('../auth');
 const { parseLimit, parseOffset } = require('../lib/validation');
+const { getProductStockStatus } = require('../lib/stock');
 
 const router = express.Router();
 const db = getDb();
@@ -44,10 +45,21 @@ router.get('/inventory', (req, res) => {
 
         const totalValue = rows.reduce((sum, p) => sum + p.unit_value + p.liter20_value, 0);
         const totalUnits = rows.reduce((sum, p) => sum + p.unit_stock + p.liter20_stock, 0);
-        const lowStockItems = rows.filter(p =>
-            p.unit_stock <= p.low_stock_threshold ||
-            p.liter20_stock <= p.low_stock_threshold
-        );
+        const lowStockItems = [];
+
+        for (const p of products) {
+            const status = getProductStockStatus(p, p.unit_stock, p.liter20_stock);
+            p.cartons = status.cartons;
+            p.loose_units = status.units;
+            p.is_carton_low = status.isCartonLow;
+            p.is_liter20_low = status.isLiter20Low;
+            p.is_low_stock = status.isLow;
+            p.low_stock_reason = status.lowStockReason;
+            p.low_stock_label = status.lowStockLabel;
+            if (status.isLow) {
+                lowStockItems.push(p);
+            }
+        }
 
         // Enforce total-value visibility on the server, not just in the UI.
         if (!isAdmin) {

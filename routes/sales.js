@@ -171,7 +171,7 @@ function generateReceipt(sale, items, settings) {
 
 router.post('/', (req, res) => {
     try {
-        const { customer_id, warehouse_id, items, payment_method, payment_status, notes } = req.body;
+        const { customer_id, warehouse_id, items, payment_method, payment_status, notes, discount: orderDiscount, discount_type: orderDiscountType } = req.body;
         if (!warehouse_id) return res.status(400).json({ error: 'Warehouse is required' });
         if (!items || items.length === 0) return res.status(400).json({ error: 'At least one item is required' });
 
@@ -184,6 +184,11 @@ router.post('/', (req, res) => {
         if (!PAYMENT_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid payment status' });
         if (status === 'cancelled' || status === 'refunded') {
             return res.status(400).json({ error: 'New sales cannot start as cancelled or refunded' });
+        }
+
+        const saleDiscountType = orderDiscountType || 'amount';
+        if (orderDiscountType && !['amount', 'percent'].includes(orderDiscountType)) {
+            throw new ClientError(400, 'Invalid discount type');
         }
 
         const saleId = uuidv4();
@@ -240,14 +245,27 @@ router.post('/', (req, res) => {
 
         const markup = round2(validatedItems.reduce((sum, i) => sum + (i.extra * i.quantity), 0));
 
+        let saleDiscountAmount = 0;
+        if (orderDiscount != null) {
+            const rawDiscount = parseFiniteNumber(orderDiscount, 'Sale discount');
+            if (rawDiscount < 0) throw new ClientError(400, 'Discount cannot be negative');
+            if (saleDiscountType === 'percent') {
+                if (rawDiscount > 100) throw new ClientError(400, 'Discount percentage cannot exceed 100%');
+                saleDiscountAmount = round2((subtotal * rawDiscount) / 100);
+            } else {
+                saleDiscountAmount = round2(rawDiscount);
+            }
+            if (saleDiscountAmount > subtotal) throw new ClientError(400, 'Discount exceeds subtotal');
+        }
+
         const tax = 0;
-        const total = round2(subtotal + markup);
+        const total = round2(Math.max(0, subtotal - saleDiscountAmount) + markup);
 
         const transaction = db.transaction(() => {
             db.prepare(
                 `INSERT INTO sales (id, customer_id, warehouse_id, subtotal, tax, markup, discount, discount_type, total, payment_method, payment_status, notes, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, 0, 'amount', ?, ?, ?, ?, ?)`
-            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, markup, total, method, status, notes || null, req.user.id);
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).run(saleId, customer_id || null, warehouse_id, subtotal, tax, markup, saleDiscountAmount, saleDiscountType, total, method, status, notes || null, req.user.id);
 
             for (const item of validatedItems) {
                 const itemId = uuidv4();

@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "init-db": "node -e \"require('./database').initializeDatabase()\"",
-    "test": "node --test --test-concurrency=1 tests/unit.security.test.js tests/unit.validation.test.js tests/startup.security.test.js tests/api.security.test.js tests/api.pricing.test.js tests/api.reset.test.js tests/api.units.test.js"
+    "test": "node --test --test-concurrency=1 tests/unit.security.test.js tests/unit.validation.test.js tests/unit.low-stock.test.js tests/startup.security.test.js tests/api.security.test.js tests/api.pricing.test.js tests/api.reset.test.js tests/api.units.test.js"
   },
   "keywords": [
     "inventory",
