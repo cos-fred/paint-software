@@ -251,6 +251,7 @@ function initializeDatabase() {
         runUpgradeSafeguards
     } = require('./lib/upgrade-safeguards');
     const migrationBackup = snapshotBeforeUpgrade(db, dbPath, 3);
+    require('./lib/legacy-stock').assertLegacyStockUnambiguous(db, migrationBackup);
     db.exec('PRAGMA foreign_keys = ON');
 
     db.exec(`

@@ -41,3 +41,25 @@ Migration snapshots are local, unencrypted recovery files with restricted filesy
 ## Business feature upgrade (version 3)
 
 Version 3 uses the same pre-upgrade snapshot procedure, named before-v3. It adds the payment ledger, stocktakes, closing records and paint fields transactionally. Backups of an upgraded database must contain those tables and the sale_accounts view. Restore an old snapshot with its compatible application version; updated code migrates it on startup. See BUSINESS-WORKFLOWS.md for how prior payment statuses are imported.
+
+## Ambiguous legacy carton balances
+
+If an older database contains both positive `unit_stock` and positive `carton_stock` for a product and warehouse, startup stops before schema migrations. The error identifies every affected product, warehouse, stock row ID and both quantities. This check also applies to already-versioned databases and unknown carton sizes. Neither field alone proves whether cartons were previously converted or represent additional stock, so the app never guesses, adds both automatically, or discards either quantity. Unambiguous carton-only balances still convert once when their carton size is known.
+
+This is an owner maintenance procedure before admitting users. Stop the server and keep it stopped throughout the review. From the application folder, inspect the explicitly selected database:
+
+```powershell
+node scripts/reconcile-legacy-stock.js --db "C:\path\paint_inventory.db"
+```
+
+Inspection opens the file read-only and runs no migrations. It lists ambiguous rows, names, original balances and carton size where recorded. Verify the physical stock and available records. The confirmed total must count individual units, including all units inside cartons; keep separate 20L containers out of this total. For example, 7 units and 5 legacy cartons of 12 could mean 7 already-converted units or 67 units from separate balances. Neither interpretation is automatic.
+
+Apply one verified total to the stock ID reported by inspection, with the actual reason:
+
+```powershell
+node scripts/reconcile-legacy-stock.js --db "C:\path\paint_inventory.db" --apply --stock-id "ID-FROM-REPORT" --counted-units 67 --reason "Owner physically counted five cartons of twelve plus seven loose units"
+```
+
+The command requires a non-negative whole total and an explanation. Before changing stock, it creates and verifies a full SQLite snapshot, including committed WAL data, under `migration-backups` beside the database. Its `.review.json` sidecar records the review decision and original values; only successful output containing `"applied": true` confirms the transaction committed. Snapshot or review-record failures prevent the change. Keep both files protected with the other migration recovery files.
+
+Only the selected row's unit and legacy carton balances change: the confirmed unit total is stored and its legacy carton field cleared. Separate 20L stock, other rows, sales and payment histories remain intact. A stale selected balance is rejected. Repeating the same correction is refused once the ambiguity is resolved. Review all reported rows, rerun inspection until `ambiguous_rows` is empty, then start the app and check inventory. Normal migrations can now finish without counting those cartons again. Set any missing carton sizes through Products afterward. Use regular stocktakes for later business counts.

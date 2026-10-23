@@ -67,6 +67,11 @@ function creditItem(
             `SELECT ${column} AS stock FROM product_stock WHERE product_id=? AND warehouse_id=?`
         )
         .get(item.product_id, item.warehouse_id);
+    if (!before)
+        throw new ClientError(
+            409,
+            'Product stock row not found for this warehouse'
+        );
     const restored = db
         .prepare(
             `UPDATE product_stock SET ${column}=${column}+?,updated_at=CURRENT_TIMESTAMP WHERE product_id=? AND warehouse_id=?`

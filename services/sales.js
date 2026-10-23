@@ -12,7 +12,7 @@ const money = require('../lib/money');
 const { initialPayment, validDate } = require('./payments');
 const { executeOnce } = require('./idempotency');
 const { logAudit } = require('./audit');
-const { checkLowStock } = require('./low-stock');
+const { publishStockChanges } = require('./low-stock');
 
 function stockShortages(items) {
     const pools = new Map();
@@ -253,8 +253,14 @@ function createSale(req) {
             );
             const key = `${item.product_id}:${column}`;
             const old = checks.get(key);
-            if (old) old.delta += item.delta;
-            else checks.set(key, { ...item, warehouse_id });
+            if (old) old.newStock -= item.delta;
+            else checks.set(key, {
+                productId: item.product_id,
+                warehouseId: warehouse_id,
+                unitType: item.unit_type,
+                oldStock: item.oldStock,
+                newStock: item.oldStock - item.delta
+            });
         });
         initialPayment(db, saleId, amountPaid, method, req.user.id);
         logAudit(req.user.id, 'sale.create', 'sale', saleId, {
@@ -267,20 +273,7 @@ function createSale(req) {
             message: 'Sale completed successfully'
         };
     });
-    if (!result.replay)
-        for (const check of checks.values()) {
-            try {
-                checkLowStock(
-                    check.product_id,
-                    check.warehouse_id,
-                    check.unit_type,
-                    check.oldStock - check.delta,
-                    check.oldStock
-                );
-            } catch (err) {
-                console.error('[sale] low-stock check failed:', err.message);
-            }
-        }
+    if (!result.replay) publishStockChanges(checks);
     return result;
 }
 module.exports = { createSale };

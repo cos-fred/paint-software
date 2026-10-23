@@ -60,56 +60,62 @@ describe('Versioned money and return migration', { concurrency: 1 }, () => {
         );
         assert.equal(db.pragma('foreign_key_check').length, 0);
     });
-    it('reconciles a legacy refund without restoring physical stock a second time', () => {
-        const db = getDb();
-        const user = db.prepare('SELECT id FROM users LIMIT 1').get().id,
-            warehouse = db
-                .prepare('SELECT id FROM warehouses LIMIT 1')
-                .get().id;
-        const product = randomUUID(),
-            sale = randomUUID(),
-            line = randomUUID();
-        db.prepare(
-            "INSERT INTO products(id,name,unit_price,units_per_carton) VALUES(?,'Legacy Refund',10,12)"
-        ).run(product);
-        db.prepare(
-            'INSERT INTO product_stock(id,product_id,warehouse_id,unit_stock) VALUES(?,?,?,17)'
-        ).run(randomUUID(), product, warehouse);
-        db.prepare(
-            "INSERT INTO sales(id,warehouse_id,subtotal,total,payment_status,created_by) VALUES(?,?,24,24,'refunded',?)"
-        ).run(sale, warehouse, user);
-        db.prepare(
-            "INSERT INTO sale_items(id,sale_id,product_id,warehouse_id,unit_type,quantity,unit_price,discount,line_total) VALUES(?,?,?,?,'unit',4,10,4,24)"
-        ).run(line, sale, product, warehouse);
-        db.prepare(
-            "INSERT INTO sale_returns(id,sale_id,product_id,warehouse_id,unit_type,quantity,unit_price,line_total,created_by) VALUES(?,?,?,?,'unit',1,10,10,?)"
-        ).run(randomUUID(), sale, product, warehouse, user);
-        db.prepare('DELETE FROM schema_migrations WHERE version=1').run();
-        runLaunchMigrations(db);
-        assert.equal(
-            db
-                .prepare(
-                    'SELECT SUM(amount_cents) AS n FROM sale_returns WHERE sale_id=?'
-                )
-                .get(sale).n,
-            2400
-        );
-        assert.equal(
-            db
-                .prepare(
-                    'SELECT unit_stock FROM product_stock WHERE product_id=?'
-                )
-                .get(product).unit_stock,
-            17
-        );
-        runLaunchMigrations(db);
-        assert.equal(
-            db
-                .prepare(
-                    'SELECT COUNT(*) AS n FROM sale_returns WHERE sale_id=?'
-                )
-                .get(sale).n,
-            2
-        );
-    });
+    for (const status of ['refunded', 'cancelled']) {
+        it(`reconciles a legacy ${status} sale without restoring physical stock a second time`, () => {
+            const db = getDb();
+            const user = db.prepare('SELECT id FROM users LIMIT 1').get().id,
+                warehouse = db
+                    .prepare('SELECT id FROM warehouses LIMIT 1')
+                    .get().id;
+            const product = randomUUID(),
+                sale = randomUUID(),
+                line = randomUUID();
+            db.prepare(
+                "INSERT INTO products(id,name,unit_price,units_per_carton) VALUES(?,'Legacy Refund',10,12)"
+            ).run(product);
+            db.prepare(
+                'INSERT INTO product_stock(id,product_id,warehouse_id,unit_stock) VALUES(?,?,?,17)'
+            ).run(randomUUID(), product, warehouse);
+            db.prepare(
+                'INSERT INTO sales(id,warehouse_id,subtotal,total,payment_status,created_by) VALUES(?,?,24,24,?,?)'
+            ).run(sale, warehouse, status, user);
+            db.prepare(
+                "INSERT INTO sale_items(id,sale_id,product_id,warehouse_id,unit_type,quantity,unit_price,discount,line_total) VALUES(?,?,?,?,'unit',4,10,4,24)"
+            ).run(line, sale, product, warehouse);
+            db.prepare(
+                "INSERT INTO sale_returns(id,sale_id,product_id,warehouse_id,unit_type,quantity,unit_price,line_total,created_by) VALUES(?,?,?,?,'unit',1,10,10,?)"
+            ).run(randomUUID(), sale, product, warehouse, user);
+            db.prepare('DELETE FROM schema_migrations WHERE version=1').run();
+            runLaunchMigrations(db);
+            assert.equal(
+                db
+                    .prepare(
+                        'SELECT SUM(amount_cents) AS n FROM sale_returns WHERE sale_id=?'
+                    )
+                    .get(sale).n,
+                2400
+            );
+            assert.equal(
+                db
+                    .prepare(
+                        'SELECT unit_stock FROM product_stock WHERE product_id=?'
+                    )
+                    .get(product).unit_stock,
+                17
+            );
+            const migrated = db.prepare('SELECT quantity,amount_cents,kind FROM sale_returns WHERE sale_id=? ORDER BY rowid').all(sale);
+            assert.deepEqual(migrated.map((row) => row.quantity), [1, 3]);
+            assert.deepEqual(migrated.map((row) => row.amount_cents), [600, 1800]);
+            assert.equal(migrated[1].kind, status === 'refunded' ? 'refund' : 'cancellation');
+            runLaunchMigrations(db);
+            assert.equal(
+                db
+                    .prepare(
+                        'SELECT COUNT(*) AS n FROM sale_returns WHERE sale_id=?'
+                    )
+                    .get(sale).n,
+                2
+            );
+        });
+    }
 });

@@ -110,6 +110,46 @@ it('keeps unknown carton quantities and raises a visible inventory review alert'
     assert.match(result.alerts[0].message, /Inventory review required/);
 });
 
+for (const upc of [0, 12]) {
+    it(`preserves mixed balances before any schema upgrade (carton size ${upc})`, () => {
+        const result = fixture(`
+            db.prepare("UPDATE products SET units_per_carton=? WHERE id='fixture-product'").run(${upc});
+            db.prepare("UPDATE product_stock SET unit_stock=7 WHERE id='fixture-stock'").run();
+            let error; try {initializeDatabase();} catch(e) {error=e.message;}
+            console.log(JSON.stringify({error,tax:columns('sales').includes('tax'),discount:columns('sale_items').includes('discount'),
+                stock:db.prepare("SELECT unit_stock,carton_stock FROM product_stock WHERE id='fixture-stock'").get(),
+                version:!!db.prepare('SELECT 1 FROM schema_migrations WHERE version=2').get(),
+                backups:fs.readdirSync(path.join(path.dirname(db.name),'migration-backups')).filter(n=>n.includes('before-v3')).length}));
+            db.close();
+        `);
+        assert.match(result.error, /Legacy stock review required.*Fixture.*7 units and 5 legacy cartons/);
+        assert.deepEqual(result.stock, { unit_stock: 7, carton_stock: 5 });
+        assert.equal(result.tax, true);
+        assert.equal(result.discount, false);
+        assert.equal(result.version, false);
+        assert.ok(result.backups >= 1);
+    });
+}
+
+it('resumes a blocked upgrade after explicit reconciliation without recounting cartons or losing 20L stock', () => {
+    const result = fixture(`
+        db.prepare("UPDATE product_stock SET unit_stock=7,liter20_stock=3 WHERE id='fixture-stock'").run();
+        let error; try {initializeDatabase();} catch(e) {error=e.message;}
+        const {main}=require('./scripts/reconcile-legacy-stock');
+        const reviewed=main(['--db',db.name,'--apply','--stock-id','fixture-stock','--counted-units','67','--reason','Owner confirmed all 67 individual units']);
+        const original=new Database(reviewed.backup,{readonly:true});
+        const saved=original.prepare("SELECT unit_stock,carton_stock,liter20_stock FROM product_stock WHERE id='fixture-stock'").get();
+        original.close(); initializeDatabase(); initializeDatabase();
+        console.log(JSON.stringify({error,saved,stock:db.prepare("SELECT unit_stock,carton_stock,liter20_stock FROM product_stock WHERE id='fixture-stock'").get(),
+            versions:db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r=>r.version),integrity:db.pragma('integrity_check',{simple:true})}));db.close();
+    `);
+    assert.match(result.error, /Legacy stock review required/);
+    assert.deepEqual(result.saved, { unit_stock: 7, carton_stock: 5, liter20_stock: 3 });
+    assert.deepEqual(result.stock, { unit_stock: 67, carton_stock: 0, liter20_stock: 3 });
+    assert.deepEqual(result.versions, [1, 2, 3]);
+    assert.equal(result.integrity, 'ok');
+});
+
 it('classifies historical stock alerts by the quantity label rather than the product name', () => {
     const result = fixture(`
         db.prepare("INSERT INTO alerts(id,type,product_id,warehouse_id,message,severity) VALUES('carton-alert','low_stock','fixture-product',?,'Low stock alert: 20L Paint (Main) has 2 cartons remaining (threshold: 3)','warning')").run(warehouse);

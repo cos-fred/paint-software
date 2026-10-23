@@ -31,6 +31,33 @@ after(async () => {
     getDb().close();
 });
 
+it('rejects returns with missing warehouse stock without leaving partial credits', async () => {
+    const created = await send('POST', '/api/products', {
+        name: 'Missing stock row return', warehouse_id: warehouse,
+        unit_price: 10, units_per_carton: 12, cartons: 1
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const product = created.body.id;
+    const sale = await send('POST', '/api/sales', {
+        warehouse_id: warehouse,
+        items: [{ product_id: product, unit_type: 'unit', quantity: 1 }]
+    });
+    assert.equal(sale.status, 201, JSON.stringify(sale.body));
+    const db = getDb();
+    db.prepare('DELETE FROM product_stock WHERE product_id=? AND warehouse_id=?').run(product, warehouse);
+    const snapshot = () => ['sale_returns', 'stock_movements', 'sale_payments', 'audit_logs']
+        .map((table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n);
+    const before = snapshot();
+    const result = await send('POST', '/api/returns', {
+        sale_id: sale.body.id,
+        items: [{ product_id: product, unit_type: 'unit', quantity: 1 }]
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'Product stock row not found for this warehouse');
+    assert.deepEqual(snapshot(), before);
+    assert.equal(db.prepare('SELECT total FROM sales WHERE id=?').get(sale.body.id).total, 10);
+});
+
 it('returns and cancellation recover only their own stock pool without duplicate recovery events', async () => {
     const created = await send('POST', '/api/products', {
         name: 'Recovery Paint',

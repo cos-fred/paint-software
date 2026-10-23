@@ -9,7 +9,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
       - name: Verify SQLite native binding
         run: node -e "const db = new (require('better-sqlite3'))(':memory:'); db.prepare('SELECT 1').get(); db.close()"
       - run: npm audit --omit=dev

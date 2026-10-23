@@ -85,7 +85,7 @@ describe('Database migrations', () => {
         assert.deepEqual(afterRestart, { unit_stock: 0, carton_stock: 0 });
     });
 
-    it('clears stale carton counts on rows already converted by older builds', () => {
+    it('requires review instead of assuming positive unit and carton balances overlap', () => {
         const result = run(`
             const Database = require('better-sqlite3');
             const db = new Database(process.env.DB_PATH);
@@ -96,13 +96,15 @@ describe('Database migrations', () => {
             db.close();
 
             const { initializeDatabase, getDb } = require('./database');
-            initializeDatabase();
+            let error; try { initializeDatabase(); } catch (e) { error=e.message; }
             const after = getDb().prepare('SELECT unit_stock, carton_stock FROM product_stock WHERE id = ?').get('ps1');
-            process.stdout.write(JSON.stringify(after));
+            process.stdout.write(JSON.stringify({error,after}));
         `);
 
         assert.equal(result.status, 0, result.stderr);
-        assert.deepEqual(JSON.parse(result.stdout), { unit_stock: 600, carton_stock: 0 });
+        const reviewed = JSON.parse(result.stdout);
+        assert.match(reviewed.error, /Legacy stock review required.*600 units and 5 legacy cartons/);
+        assert.deepEqual(reviewed.after, { unit_stock: 600, carton_stock: 5 });
     });
 
     it('backfills sale-item conversions even when the column already exists', () => {
