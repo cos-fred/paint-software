@@ -170,7 +170,11 @@ async function fetchWithAuth(url, options = {}) {
         if (res.status === 403 && /disabled/i.test(body.error || '')) logout();
         throw Object.assign(
             new Error(body.error || `Request failed (${res.status})`),
-            { status: res.status }
+            {
+                status: res.status,
+                code: body.code,
+                shortages: Array.isArray(body.shortages) ? body.shortages : []
+            }
         );
     }
     return res;
@@ -308,6 +312,7 @@ function showLoginScreen() {
 }
 
 function showMainScreen() {
+    refreshBusinessPermissions();
     document.getElementById('login-screen').classList.remove('active');
     document.getElementById('main-screen').classList.add('active');
 }
@@ -481,6 +486,7 @@ function setupEventListeners() {
     });
 
     setupLaunchControls();
+    setupBusinessControls();
     // Login form
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
@@ -836,6 +842,12 @@ function switchSection(section) {
         case 'customers':
             loadCustomers();
             break;
+        case 'stocktakes':
+            loadStocktakes();
+            break;
+        case 'daily-closing':
+            loadDailyClosing();
+            break;
         case 'sales':
             loadSales();
             break;
@@ -981,7 +993,7 @@ async function loadDashboard() {
                 <div class="alert-item alert-warning" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; margin-bottom: 8px;">
                     <div>
                         <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                            <strong>${escapeHtml(p.name)}</strong>
+                            <strong>${escapeHtml(p.name)}</strong>${paintDescription(p) ? `<small>${escapeHtml(paintDescription(p))}</small>` : ''}
                             <span class="status-badge status-danger">${escapeHtml(badgeText)}</span>
                         </div>
                         <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
@@ -1096,7 +1108,7 @@ async function loadStock() {
                 const badgeText = status.isLow ? status.lowStockLabel : 'OK';
 
                 return `<tr${status.isLow ? ' class="low-stock-row"' : ''}>
-                <td><strong>${escapeHtml(p.name)}</strong><br><small style="color:var(--text-muted)">${escapeHtml(p.description || '—')}</small></td>
+                <td><strong>${escapeHtml(p.name)}</strong>${paintDescription(p) ? `<small>${escapeHtml(paintDescription(p))}</small>` : ''}<br><small style="color:var(--text-muted)">${escapeHtml(p.description || '—')}</small></td>
                 <td>${escapeHtml(whName)}</td>
                 <td>${formatCurrency(p.unit_price)}</td>
                 <td>${formatCurrency(p.carton_price)}</td>
@@ -1299,7 +1311,7 @@ async function loadProducts() {
 
                 return `<tr${status.isLow ? ' class="low-stock-row"' : ''}>
                 <td>
-                    <strong>${escapeHtml(p.name)}</strong>
+                    <strong>${escapeHtml(p.name)}</strong>${paintDescription(p) ? `<small>${escapeHtml(paintDescription(p))}</small>` : ''}
                     ${status.isLow ? `<span class="status-badge status-danger" style="margin-left: 6px; font-size: 0.72rem; padding: 2px 6px;">${escapeHtml(status.lowStockLabel)}</span>` : ''}
                     ${p.description ? `<br><small style="color:var(--text-muted)">${escapeHtml(p.description)}</small>` : ''}
                 </td>
@@ -1356,6 +1368,7 @@ async function openProductModal(productId = null) {
                 document.getElementById('product-id').value = p.id;
                 document.getElementById('product-name').value = p.name;
                 document.getElementById('product-sku').value = p.sku || '';
+                setPaintFields(p);
                 document.getElementById('product-description').value =
                     p.description || '';
                 document.getElementById('product-units-per-carton').value =
@@ -1438,6 +1451,7 @@ async function handleProductSubmit(e) {
                 ? defaultThreshold
                 : Number(document.getElementById('product-threshold').value)
     };
+    Object.assign(data, getPaintFields());
     if (!id) {
         const warehouseId = document.getElementById(
             'product-initial-warehouse'
@@ -1514,7 +1528,7 @@ async function loadProductsForSelect() {
             products
                 .map(
                     (p) =>
-                        `<option value="${p.id}" data-unit="${p.unit_price}" data-carton="${p.carton_price}" data-liter20="${p.liter20_price}">${escapeHtml(p.name)}</option>`
+                        `<option value="${p.id}" data-unit="${p.unit_price}" data-carton="${p.carton_price}" data-liter20="${p.liter20_price}">${escapeHtml(p.name)}${paintDescription(p) ? ' · ' + escapeHtml(paintDescription(p)) : ''}</option>`
                 )
                 .join('');
         document
@@ -1545,7 +1559,7 @@ async function loadCustomers() {
 
         if (!customers.length) {
             tbody.innerHTML =
-                '<tr><td colspan="8" class="empty-state"><h4>No Customers</h4><p>Click "Add Customer" to get started</p></td></tr>';
+                '<tr><td colspan="9" class="empty-state"><h4>No Customers</h4><p>Click "Add Customer" to get started</p></td></tr>';
             return;
         }
 
@@ -1558,10 +1572,10 @@ async function loadCustomers() {
                 <td>${escapeHtml(c.phone || '—')}</td>
                 <td>${escapeHtml([c.city, c.state, c.country].filter(Boolean).join(', ') || '—')}</td>
                 <td>${c.purchase_count ?? 0}</td>
-                <td>${formatCurrency(c.total_spent ?? 0)}</td>
+                <td>${formatCurrency(c.total_spent ?? 0)}</td><td>${formatCurrency(c.balance_due ?? 0)}${c.refund_due ? `<small>Refund owed: ${formatCurrency(c.refund_due)}</small>` : ''}</td>
                 <td>${c.last_purchase ? new Date(c.last_purchase).toLocaleDateString() : '—'}</td>
                 <td>
-                    <button class="action-btn edit" data-action="edit-customer" data-id="${c.id}">✏️ Edit</button>
+                    <button class="action-btn edit" data-action="edit-customer" data-id="${c.id}">✏️ Edit</button><button class="action-btn" data-business-action="statement" data-id="${c.id}">Statement</button>
                     <button class="action-btn delete" ${currentUser?.role === 'admin' ? '' : 'hidden'} data-action="delete-customer" data-id="${c.id}" data-name="${escapeAttr(c.name)}">🗑️ Delete</button>
                 </td>
             </tr>`
@@ -1575,6 +1589,7 @@ async function loadCustomers() {
 
 function openCustomerModal() {
     document.getElementById('customer-form').reset();
+    document.getElementById('customer-optional').open = false;
     document.getElementById('customer-id').value = '';
     document.getElementById('customer-modal-title').textContent =
         'Add Customer';
@@ -1601,6 +1616,16 @@ function editCustomer(id) {
             document.getElementById('customer-country').value =
                 c.country || 'Ghana';
             document.getElementById('customer-notes').value = c.notes || '';
+            document.getElementById('customer-optional').open =
+                [
+                    'email',
+                    'tax_id',
+                    'address',
+                    'city',
+                    'state',
+                    'postal_code',
+                    'notes'
+                ].some((k) => !!c[k]) || !!(c.country && c.country !== 'Ghana');
             showModal('customer-modal');
         })
         .catch((err) => showToast(err.message, 'error'));
@@ -1733,11 +1758,11 @@ async function loadSales() {
                 <td>${formatCurrency(s.subtotal)}</td>
                 <td>${formatCurrency(s.discount)}</td>
                 <td>${formatCurrency(s.markup)}</td>
-                <td><strong>${formatCurrency(s.total)}</strong></td>
-                <td>${escapeHtml(s.payment_method)}</td>
-                <td><span class="status-badge status-${s.payment_status}">${s.payment_status}</span></td>
+                <td><strong>${formatCurrency(s.total)}</strong><small>${s.balance_due > 0 ? `Due: ${formatCurrency(s.balance_due)}` : s.refund_due > 0 ? `Refund owed: ${formatCurrency(s.refund_due)}` : 'Paid'}</small></td>
+                <td>${escapeHtml(s.payment_methods?.join(', ') || s.payment_method)}</td>
+                <td><span class="status-badge status-${s.payment_status}">${escapeHtml(paymentStatusLabel(s))}</span></td>
                 <td>
-                    <button class="action-btn view" data-action="view-receipt" data-id="${s.id}">👁️ View</button>
+                    <button class="action-btn view" data-business-action="payment" data-id="${s.id}">Payments</button><button class="action-btn" data-action="view-receipt" data-id="${s.id}">👁️ View</button>
                     <button class="action-btn view" data-permission="manage_returns" ${hasPermission('manage_returns') ? '' : 'hidden'} data-action="open-return" data-id="${s.id}">↩️ Return</button>
                     ${s.payment_status === 'pending' ? `<button class="action-btn edit" data-action="mark-paid" data-id="${s.id}">💵 Mark Paid</button>` : ''}
                     ${
@@ -1759,6 +1784,7 @@ async function loadSales() {
 }
 
 async function openSaleModal() {
+    clearSaleStockErrors();
     document.getElementById('sale-form').reset();
     document.getElementById('sale-items-container').innerHTML =
         buildSaleItemRow();
@@ -1771,7 +1797,10 @@ async function openSaleModal() {
     if (whSelect) {
         if (saleWarehouseChangeHandler)
             whSelect.removeEventListener('change', saleWarehouseChangeHandler);
-        saleWarehouseChangeHandler = loadProductsForSelect;
+        saleWarehouseChangeHandler = () => {
+            clearSaleStockErrors();
+            loadProductsForSelect();
+        };
         whSelect.addEventListener('change', saleWarehouseChangeHandler);
     }
     attachSaleItemEvents(document.querySelector('.sale-item-row'));
@@ -1788,8 +1817,8 @@ function buildSaleItemRow() {
             <option value="liter20">20L Container</option>
         </select>
         <input type="number" class="sale-item-qty" min="1" value="1" required>
-        <label class="sale-item-labeled"><span>Markup/item</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
-        <label class="sale-item-labeled"><span>Discount/item</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label>
+        <details class="sale-adjustments"><summary>Price adjustments</summary><div><label class="sale-item-labeled"><span>Markup/item</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
+        <label class="sale-item-labeled"><span>Discount/item</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label></div></details>
         <span class="sale-item-price"></span>
         <span class="sale-item-total">${formatCurrency(0)}</span>
         <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
@@ -1797,6 +1826,8 @@ function buildSaleItemRow() {
 }
 
 function attachSaleItemEvents(row) {
+    row.addEventListener('input', clearSaleStockErrors);
+    row.addEventListener('change', clearSaleStockErrors);
     row.querySelector('.sale-item-product').addEventListener(
         'change',
         updateSaleItemPrice
@@ -1819,6 +1850,7 @@ function attachSaleItemEvents(row) {
     );
     row.querySelector('.remove-item').addEventListener('click', () => {
         if (document.querySelectorAll('.sale-item-row').length > 1) {
+            clearSaleStockErrors();
             row.remove();
             updateSaleSummary();
         }
@@ -1826,6 +1858,7 @@ function attachSaleItemEvents(row) {
 }
 
 function addSaleItemRow() {
+    clearSaleStockErrors();
     const container = document.getElementById('sale-items-container');
     container.insertAdjacentHTML('beforeend', buildSaleItemRow());
     const newRow = container.lastElementChild;
@@ -1892,6 +1925,7 @@ function updateSaleSummary() {
         formatCurrency(subtotal);
     document.getElementById('sale-markup').textContent = formatCurrency(markup);
     document.getElementById('sale-total').textContent = formatCurrency(total);
+    updateBusinessPaymentSummary(total);
 
     const discountRow = document.getElementById('sale-discount-row');
     const discountEl = document.getElementById('sale-discount');
@@ -1905,8 +1939,48 @@ function updateSaleSummary() {
     }
 }
 
+function clearSaleStockErrors() {
+    const summary = document.getElementById('sale-stock-errors');
+    if (summary) {
+        summary.hidden = true;
+        summary.replaceChildren();
+    }
+    document.querySelectorAll('.sale-item-row.stock-shortage').forEach((row) => {
+        row.classList.remove('stock-shortage');
+        const quantity = row.querySelector('.sale-item-qty');
+        quantity.removeAttribute('aria-invalid');
+        quantity.removeAttribute('aria-describedby');
+    });
+}
+
+function showSaleStockErrors(shortages) {
+    clearSaleStockErrors();
+    const summary = document.getElementById('sale-stock-errors');
+    const heading = document.createElement('strong');
+    heading.textContent = 'Not enough stock in the selected warehouse. Adjust these items:';
+    const list = document.createElement('ul');
+    const rows = document.querySelectorAll('.sale-item-row');
+    shortages.forEach((item) => {
+        const entry = document.createElement('li');
+        entry.textContent = `${item.product_name}${item.sku ? ` (${item.sku})` : ''} — requested ${item.requested_label}; available ${item.available_label}.`;
+        list.appendChild(entry);
+        item.item_indexes.forEach((index) => {
+            const row = rows[index];
+            if (!row) return;
+            row.classList.add('stock-shortage');
+            const quantity = row.querySelector('.sale-item-qty');
+            quantity.setAttribute('aria-invalid', 'true');
+            quantity.setAttribute('aria-describedby', 'sale-stock-errors');
+        });
+    });
+    summary.append(heading, list);
+    summary.hidden = false;
+    summary.focus();
+}
+
 async function handleSaleSubmit(e) {
     e.preventDefault();
+    clearSaleStockErrors();
     const warehouseId = document.getElementById('sale-warehouse')?.value;
     if (!warehouseId) {
         showToast('Please select a warehouse', 'error');
@@ -1951,6 +2025,7 @@ async function handleSaleSubmit(e) {
         notes: document.getElementById('sale-notes').value.trim()
     };
     try {
+        Object.assign(data, salePaymentFields());
         const res = await mutationRequest(`${API_BASE}/sales`, data, 'sale');
         updatePendingSaleButton();
         const result = await res.json();
@@ -1962,7 +2037,9 @@ async function handleSaleSubmit(e) {
         loadStock();
         viewReceipt(result.id);
     } catch (err) {
-        showToast(err.message, 'error');
+        if (err.code === 'INSUFFICIENT_STOCK' && err.shortages?.length)
+            showSaleStockErrors(err.shortages);
+        else showToast(err.message, 'error');
     }
 }
 
@@ -2031,8 +2108,14 @@ function displayReceipt(receipt) {
             <div class="receipt-totals">
                 ${receipt.discount > 0 ? `<div class="receipt-row"><span>Discount:</span><span>-${formatCurrency(receipt.discount)}</span></div>` : ''}
                 <div class="receipt-row total"><span>TOTAL:</span><span>${formatCurrency(receipt.total)}</span></div>
-                <div class="receipt-row"><span>Payment:</span><span>${escapeHtml(receipt.payment_method)}</span></div>
-                <div class="receipt-row"><span>Status:</span><strong>${escapeHtml(receipt.payment_status === 'pending' ? 'UNPAID' : receipt.payment_status.toUpperCase())}</strong></div>
+                ${receipt.net_total < receipt.total ? `<div class="receipt-row"><span>Returns / credits:</span><span>-${formatCurrency(receipt.total - receipt.net_total)}</span></div><div class="receipt-row"><span>Net invoice:</span><span>${formatCurrency(receipt.net_total)}</span></div>` : ''}
+                ${receipt.received_amount > 0 ? `<div class="receipt-row"><span>Received:</span><span>${formatCurrency(receipt.received_amount)}</span></div>` : ''}
+                ${receipt.refunded_amount > 0 ? `<div class="receipt-row"><span>Refunds paid:</span><span>${formatCurrency(receipt.refunded_amount)}</span></div>` : ''}
+                ${receipt.balance_due > 0 ? `<div class="receipt-row"><span>Balance due:</span><span>${formatCurrency(receipt.balance_due)}</span></div>` : ''}
+                ${receipt.refund_due > 0 ? `<div class="receipt-row"><span>Refund owed:</span><span>${formatCurrency(receipt.refund_due)}</span></div>` : ''}
+                ${receipt.due_date && receipt.balance_due > 0 ? `<div class="receipt-row"><span>Due by:</span><span>${escapeHtml(receipt.due_date)}</span></div>` : ''}
+                <div class="receipt-row"><span>Payment:</span><span>${escapeHtml(receipt.payment_methods?.join(', ') || receipt.payment_method)}</span></div>
+                <div class="receipt-row"><span>Status:</span><strong>${escapeHtml(paymentStatusLabel(receipt).toUpperCase())}</strong></div>
             </div>
             ${receipt.notes ? `<p class="receipt-notes">Notes: ${escapeHtml(receipt.notes)}</p>` : ''}
         </div>`;
@@ -2757,7 +2840,8 @@ async function openTransferModal() {
         '<option value="">Select Product</option>' +
         products
             .map(
-                (p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`
+                (p) =>
+                    `<option value="${p.id}">${escapeHtml(p.name)}${paintDescription(p) ? ' · ' + escapeHtml(paintDescription(p)) : ''}</option>`
             )
             .join('');
     showModal('transfer-modal');
@@ -3049,6 +3133,7 @@ function initRealtime() {
         )
     );
     realtimeSocket.on('data-changed', () => {
+        refreshBusinessSection();
         const active =
             document.querySelector('.nav-item.active')?.dataset.section ||
             'dashboard';

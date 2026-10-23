@@ -250,7 +250,7 @@ function initializeDatabase() {
         snapshotBeforeUpgrade,
         runUpgradeSafeguards
     } = require('./lib/upgrade-safeguards');
-    const migrationBackup = snapshotBeforeUpgrade(db, dbPath);
+    const migrationBackup = snapshotBeforeUpgrade(db, dbPath, 3);
     db.exec('PRAGMA foreign_keys = ON');
 
     db.exec(`
@@ -469,6 +469,10 @@ function initializeDatabase() {
     migrateUnitTypeCheck();
     require('./lib/migrations').runLaunchMigrations(db);
     runUpgradeSafeguards(db, migrationBackup);
+    require('./lib/business-migrations').runBusinessMigrations(
+        db,
+        migrationBackup
+    );
 
     const warehouseCount = db
         .prepare('SELECT COUNT(*) as count FROM warehouses')
@@ -579,6 +583,11 @@ function seedDefaultWarehouses() {
 function resetDatabase(adminId) {
     const transaction = db.transaction(() => {
         db.prepare('DELETE FROM request_keys').run();
+        db.prepare('DELETE FROM daily_closing_revisions').run();
+        db.prepare('DELETE FROM daily_closings').run();
+        db.prepare('DELETE FROM stocktake_items').run();
+        db.prepare('DELETE FROM stocktakes').run();
+        db.prepare('DELETE FROM sale_payments').run();
         db.prepare('DELETE FROM sale_returns').run();
         db.prepare('DELETE FROM sale_items').run();
         db.prepare('DELETE FROM stock_movements').run();

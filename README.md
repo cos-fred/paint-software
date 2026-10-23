@@ -4,17 +4,22 @@ A small-business web application using Node.js 24 LTS, Express, SQLite and a pla
 
 ## Implemented features
 
-- Products with unit, automatic/manual carton and 20L prices.
+- Products with unit, automatic/manual carton and 20L prices, plus searchable brand, colour/code, finish and container-size details.
 - Warehouse stock, adjustments, transfers and low-stock alerts.
-- Sales with per-item markup/discount, optional API order discounts, cash/card/transfer/mobile-money labels, and paid/unpaid status.
+- Sales with per-item markup/discount, optional API order discounts, cash/card/transfer/mobile-money labels, and paid/part-paid/unpaid balances.
 - Item returns, complete refunds and cancellation with stock reversal and credit history.
-- Customers, searchable sales/customer pickers, and paginated history lists.
+- Customers with statements, deposits, later payments, due dates and separate refund balances.
+- Stocktake drafts, complete count submission, owner approval and conflict checks.
+- Ghana-time daily closing per warehouse, collections by method, counted cash and immutable closing revisions.
+- Searchable sales/customer pickers, paginated history, and optional customer/price-adjustment form details.
 - Original receipts with payment status; reports for inventory selling value, sales before returns, returns/refunds and net revenue.
 - Administrator/staff roles and delegated product, transfer and return permissions.
 - Live refresh notifications, forced first-login password changes, immediate session revocation, settings and audit history.
 - Hourly verified backups, optional encrypted daily independent copies, backup health and restore-to-new-file tooling.
 
-This version does not implement product categories, supplier purchase orders, accounting profit, partial payments, a payment gateway, or offline synchronization. Payment methods and credits are bookkeeping records; the app does not move money. SQLite is the implemented database; PostgreSQL would require a separate migration project.
+This version does not implement product categories, supplier purchase orders, accounting profit, a payment gateway, or offline synchronization. Payment methods and credits are bookkeeping records; the app does not move money. SQLite is the implemented database; PostgreSQL would require a separate migration project.
+
+See [Business workflows](docs/BUSINESS-WORKFLOWS.md) for stocktaking, customer balances, refunds, daily closing and migration rules.
 
 ## Local setup
 
@@ -33,11 +38,11 @@ New monetary calculations use integer cents. Prices, markup and discounts accept
 
 An order discount applies to the after-item-discount subtotal, before markup. It is distributed proportionally across those line amounts using largest-remainder allocation. Selected-line partial returns use cumulative rounding, so a full return credits exactly the line's original net amount. A legacy product/unit return request allocates quantities to remaining sale lines in original order; new clients should always send sale_item_id.
 
-Pending sales deduct stock immediately. Marking paid does not deduct it again. Item returns reduce the remaining quantity and net sale value while preserving the original receipt. Full refund/cancellation restores and credits only quantities not already returned. Terminal statuses cannot be reversed or repeated. Cancelled sales are excluded from sales reports; refunded sales remain in sales-before-returns and are offset by their credits.
+Pending sales deduct stock immediately. Marking paid does not deduct it again. Item returns reduce the remaining quantity and net sale value while preserving the original receipt. Full refund/cancellation restores and credits only quantities not already returned. Cash refunds are recorded separately from stock/credit reversals. Terminal statuses cannot be reversed or repeated. Cancelled sales are excluded from sales reports; refunded sales remain in sales-before-returns and are offset by their credits.
 
-Reports attribute returns to the original sale's date, rather than the day the return was processed. Return history retains its actual timestamps. The reported unit quantity includes units inside cartons; 20L quantities are separate. Inventory value uses selling prices, not purchase cost. Currency is locked once a sale exists so old receipts cannot silently change currency.
+Sales summary and product reports attribute returns to the original sale's date. Daily Closing records credits and actual money movements on their event dates. Return history retains its actual timestamps. The reported unit quantity includes units inside cartons; 20L quantities are separate. Inventory value uses selling prices, not purchase cost. Currency is locked once a sale exists so old receipts cannot silently change currency.
 
-POST /api/sales and POST /api/returns accept an Idempotency-Key header (16–128 letters/digits/underscores/hyphens). A successful retry with the same user, operation, key and payload returns the original result with HTTP 200; creation returns 201. Reusing a key for different data returns 409. Keys and results are committed in the same transaction as stock changes. The browser retains unresolved sale attempts in session storage and exposes Retry pending sale. Do not clear browser/session storage to work around an unresolved request; resolve it first.
+POST /api/sales, POST /api/returns and POST /api/sales/:saleId/payments accept an Idempotency-Key header (16–128 letters/digits/underscores/hyphens). A successful retry with the same user, operation, key and payload returns the original result with HTTP 200; creation returns 201. Reusing a key for different data returns 409. Keys and results are committed in the same transaction as stock changes. The browser retains unresolved sale attempts in session storage and exposes Retry pending sale. Do not clear browser/session storage to work around an unresolved request; resolve it first.
 
 ## Users and permissions
 
@@ -64,7 +69,7 @@ The reset endpoint is disabled in production unless ALLOW_SYSTEM_RESET=true. In 
 
 ## API and operational notes
 
-Routes are mounted under /api: auth, auth/users, products, customers, sales, transfers, returns, reports, alerts, audit, settings and system. List endpoints use limit/offset; limits are bounded to 500. Product listing is an unpaginated active catalogue, used for product selection. Search terms and filters are parameterized.
+Routes are mounted under /api: auth, auth/users, products, customers, sales, transfers, returns, reports, alerts, audit, settings and system. New routes include /api/stocktakes, /api/daily-closing, /api/sales/:saleId/payments and /api/customers/:id/statement. List endpoints use limit/offset; limits are bounded to 500. Product listing is an unpaginated active catalogue, used for product selection. Search terms and filters are parameterized.
 
 PUT /api/settings accepts {values:{key:value,...}} and validates the entire settings group before writing anything. Single-key updates remain supported. PUT /api/auth/profile saves an email. GET /api/system/status reports backup health and reset availability to administrators. POST /api/system/backup creates a verified snapshot; GET /api/system/backup/download downloads one. GET /api/health returns 503 if the database cannot be queried or free storage is below 50MB; it exposes no secrets or filesystem paths.
 

@@ -1,6 +1,6 @@
 const { randomUUID } = require('node:crypto');
 const { getDb } = require('../database');
-const { ClientError } = require('../lib/errors');
+const { ClientError, StockShortageError } = require('../lib/errors');
 const { parsePositiveInteger } = require('../lib/validation');
 const {
     stockColumn,
@@ -9,9 +9,54 @@ const {
     UNIT_TYPES
 } = require('../lib/stock');
 const money = require('../lib/money');
+const { initialPayment, validDate } = require('./payments');
 const { executeOnce } = require('./idempotency');
 const { logAudit } = require('./audit');
 const { checkLowStock } = require('./low-stock');
+
+function stockShortages(items) {
+    const pools = new Map();
+    items.forEach((item, index) => {
+        const pool = stockColumn(item.unit_type);
+        const key = `${item.product_id}:${pool}`;
+        if (!pools.has(key)) pools.set(key, {
+            product_id: item.product_id,
+            product_name: item.product_name,
+            sku: item.sku,
+            pool: pool === 'unit_stock' ? 'units' : 'liter20',
+            units_per_carton: item.units_per_carton,
+            requested: 0,
+            available: item.oldStock,
+            item_indexes: [],
+            quantities: new Map()
+        });
+        const group = pools.get(key);
+        group.requested += item.delta;
+        if (!Number.isSafeInteger(group.requested))
+            throw new ClientError(400, 'Combined quantity is outside the supported range');
+        group.item_indexes.push(index);
+        group.quantities.set(item.unit_type,
+            (group.quantities.get(item.unit_type) || 0) + item.quantity);
+    });
+    const count = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+    return [...pools.values()].filter((group) => group.requested > group.available)
+        .map(({ quantities, ...group }) => {
+            const requested = [...quantities].map(([type, quantity]) =>
+                count(quantity, type === 'liter20' ? '20L container' : type)
+            ).join(' + ');
+            const per = group.units_per_carton;
+            const available = group.pool === 'liter20'
+                ? count(group.available, '20L container')
+                : per > 0
+                  ? `${count(Math.floor(group.available / per), 'carton')} + ${count(group.available % per, 'loose unit')} (${count(group.available, 'unit')} total)`
+                  : count(group.available, 'unit');
+            return {
+                ...group,
+                requested_label: requested + (quantities.has('carton') ? ` (${count(group.requested, 'unit')} total)` : ''),
+                available_label: available
+            };
+        });
+}
 
 function createSale(req) {
     const db = getDb();
@@ -62,10 +107,11 @@ function createSale(req) {
             const price = priceColumn(item.unit_type);
             const product = db
                 .prepare(
-                    `SELECT ps.${column} AS stock,p.${price} AS price,p.units_per_carton FROM products p JOIN product_stock ps ON ps.product_id=p.id
-                WHERE p.id=? AND p.is_active=1 AND ps.warehouse_id=?`
+                    `SELECT COALESCE(ps.${column},0) AS stock,p.${price} AS price,p.units_per_carton,p.name,p.sku
+                FROM products p LEFT JOIN product_stock ps ON ps.product_id=p.id AND ps.warehouse_id=?
+                WHERE p.id=? AND p.is_active=1`
                 )
-                .get(item.product_id, warehouse_id);
+                .get(warehouse_id, item.product_id);
             if (!product)
                 throw new ClientError(400, 'Product not found in warehouse');
             const delta = toUnits(
@@ -73,8 +119,6 @@ function createSale(req) {
                 quantity,
                 product.units_per_carton
             );
-            if (delta > product.stock)
-                throw new ClientError(400, 'Insufficient stock');
             const unitPrice = money.cents(product.price, 'Product price');
             const discount = money.cents(
                 item.discount ?? 0,
@@ -86,6 +130,8 @@ function createSale(req) {
             return {
                 id: randomUUID(),
                 product_id: item.product_id,
+                product_name: product.name,
+                sku: product.sku,
                 unit_type: item.unit_type,
                 quantity,
                 unitPrice,
@@ -98,6 +144,10 @@ function createSale(req) {
                 oldStock: product.stock
             };
         });
+        // Validate every product/pool before writing. Cartons and loose units
+        // share one pool, including when the product occurs on multiple lines.
+        const shortages = stockShortages(validated);
+        if (shortages.length) throw new StockShortageError(shortages);
         const subtotal = money.sum(validated.map((item) => item.base));
         const markup = money.sum(validated.map((item) => item.markup));
         let discount;
@@ -122,10 +172,28 @@ function createSale(req) {
             validated.map((item) => item.base)
         );
         const total = money.sum([subtotal - discount, markup]);
+        const amountPaid =
+            req.body.amount_paid === undefined
+                ? status === 'completed'
+                    ? total
+                    : 0
+                : money.cents(req.body.amount_paid, 'Amount paid');
+        if (amountPaid > total)
+            throw new ClientError(400, 'Amount paid exceeds the sale total');
+        if (
+            req.body.amount_paid !== undefined &&
+            amountPaid < total &&
+            !customer_id
+        )
+            throw new ClientError(
+                400,
+                'Select a customer for a part-paid or unpaid sale'
+            );
+        const dueDate = validDate(req.body.due_date);
         const saleId = randomUUID();
         db.prepare(
-            `INSERT INTO sales(id,customer_id,warehouse_id,subtotal,markup,discount,discount_type,total,payment_method,payment_status,notes,created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+            `INSERT INTO sales(id,customer_id,warehouse_id,subtotal,markup,discount,discount_type,total,payment_method,payment_status,notes,created_by,due_date)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
             saleId,
             customer_id || null,
@@ -136,9 +204,10 @@ function createSale(req) {
             discountType,
             money.amount(total),
             method,
-            status,
+            amountPaid >= total ? 'completed' : 'pending',
             notes || null,
-            req.user.id
+            req.user.id,
+            dueDate
         );
         validated.forEach((item, index) => {
             const column = stockColumn(item.unit_type);
@@ -169,7 +238,7 @@ function createSale(req) {
                 )
                 .run(item.delta, item.product_id, warehouse_id, item.delta);
             if (!deducted.changes)
-                throw new ClientError(400, 'Insufficient stock');
+                throw new ClientError(400, `Stock changed for ${item.product_name}. Refresh the sale and try again.`);
             db.prepare(
                 `INSERT INTO stock_movements(id,product_id,warehouse_id,movement_type,unit_type,quantity,reference_id,reference_type,created_by)
                 VALUES (?,?,?,'out',?,?,?,'sale',?)`
@@ -187,6 +256,7 @@ function createSale(req) {
             if (old) old.delta += item.delta;
             else checks.set(key, { ...item, warehouse_id });
         });
+        initialPayment(db, saleId, amountPaid, method, req.user.id);
         logAudit(req.user.id, 'sale.create', 'sale', saleId, {
             total: money.amount(total),
             payment_method: method

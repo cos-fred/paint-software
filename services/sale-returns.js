@@ -102,6 +102,7 @@ function creditItem(
     item.returned_quantity = newReturned;
     item.returned_cents += credit;
     item.remaining_quantity -= quantity;
+    require('./payments').refreshPaymentStatus(item.sale_id);
     return credit;
 }
 

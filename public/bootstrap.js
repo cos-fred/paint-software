@@ -19,10 +19,8 @@
         if (typeof window.PaintStock?.getProductStockStatus !== 'function')
             return failed();
         // launch-controls defines functions used when app.js handles DOM ready.
-        load('/launch-controls.js', () =>
-            load('/app.js', () => {
-                document.dispatchEvent(new Event('paint:ready'));
-            })
+        load('/business-controls.js', () =>
+            load('/launch-controls.js', () => load('/app.js', () => {}))
         );
     });
 })();

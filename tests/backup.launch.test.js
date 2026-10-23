@@ -122,4 +122,13 @@ describe('Verified encrypted backups and recovery', { concurrency: 1 }, () => {
         assert.equal(result.status, 0, result.stderr);
         verifyDatabase(output);
     });
+    it('rejects a version 3 backup whose payment ledger is missing', async () => {
+        const file = await runBackup();
+        const output = path.join(temp, 'missing-payment-ledger.db');
+        require('../lib/backup-files').restoreToNewFile(file, output);
+        const damaged = new (require('better-sqlite3'))(output);
+        damaged.exec('DROP TABLE sale_payments');
+        damaged.close();
+        assert.throws(() => verifyDatabase(output));
+    });
 });

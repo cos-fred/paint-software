@@ -18,6 +18,7 @@ const {
     parseOffset
 } = require('../lib/validation');
 const { sanitizeCell } = require('../lib/export');
+const { decorate, account, recordPayment } = require('../services/payments');
 const { createSale } = require('../services/sales');
 const { returnableItems, creditItem } = require('../services/sale-returns');
 
@@ -110,7 +111,12 @@ router.get('/', (req, res) => {
         }
         query += ' ORDER BY s.sale_date DESC, s.rowid DESC LIMIT ? OFFSET ?';
         params.push(parseLimit(limit, 100), parseOffset(offset));
-        res.json(db.prepare(query).all(...params));
+        res.json(
+            db
+                .prepare(query)
+                .all(...params)
+                .map(decorate)
+        );
     } catch (err) {
         sendSafeError(res, err, '[sales]');
     }
@@ -202,7 +208,7 @@ router.get('/:id', (req, res) => {
             .get(req.params.id);
         if (!sale) return res.status(404).json({ error: 'Sale not found' });
         const items = returnableItems(req.params.id);
-        res.json({ ...sale, items });
+        res.json({ ...decorate(sale), items });
     } catch (err) {
         sendSafeError(res, err, '[sales]');
     }
@@ -231,7 +237,23 @@ router.get('/:id/receipt', (req, res) => {
         settings.forEach((s) => {
             settingsObj[s.key] = s.value;
         });
-        res.json(generateReceipt(sale, items, settingsObj));
+        const paymentInfo = account(sale.id);
+        res.json({
+            ...generateReceipt(sale, items, settingsObj),
+            ...Object.fromEntries(
+                [
+                    'net_total',
+                    'paid_amount',
+                    'received_amount',
+                    'refunded_amount',
+                    'balance_due',
+                    'refund_due',
+                    'payment_state',
+                    'due_date',
+                    'payment_methods'
+                ].map((key) => [key, paymentInfo[key]])
+            )
+        });
     } catch (err) {
         sendSafeError(res, err, '[sales]');
     }
@@ -371,7 +393,21 @@ router.put('/:id/payment-status', authenticateToken, (req, res) => {
             return res.status(403).json({ error: 'Admin access required' });
         }
 
-        applyStatusChange(req.params.id, payment_status, req.user.id);
+        if (isMarkPaid) {
+            const remaining = account(req.params.id).balance_due;
+            const original = req.body;
+            req.body = {
+                amount: remaining,
+                method:
+                    req.body.payment_method ||
+                    account(req.params.id).payment_method
+            };
+            try {
+                recordPayment(req, req.params.id);
+            } finally {
+                req.body = original;
+            }
+        } else applyStatusChange(req.params.id, payment_status, req.user.id);
         logAudit(req.user.id, 'sale.status', 'sale', req.params.id, {
             payment_status
         });

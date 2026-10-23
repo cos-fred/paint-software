@@ -6,9 +6,6 @@
     <title>VEEMENZ - Inventory Tracker</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="app">
@@ -115,6 +112,8 @@
                             <span class="nav-icon">📜</span>
                             <span>Audit Log</span>
                         </a>
+                        <a href="#" class="nav-item" data-section="stocktakes" id="stocktakes-nav"><span>📋</span><span>Stocktakes</span></a>
+                        <a href="#" class="nav-item" data-section="daily-closing"><span>🧾</span><span>Daily Closing</span></a>
                         <a href="#" class="nav-item" data-section="reports">
                             <span class="nav-icon">📈</span>
                             <span>Reports</span>
@@ -261,7 +260,7 @@
                                         <th>Phone</th>
                                         <th>Address</th>
                                         <th>Purchases</th>
-                                        <th>Total Spent</th>
+                                        <th>Net Purchases</th><th>Balance Due</th>
                                         <th>Last Purchase</th>
                                         <th>Actions</th>
                                     </tr>
@@ -474,6 +473,28 @@
                         </div>
                     </section>
 
+
+                <section id="stocktakes-section" class="content-section">
+                    <div class="section-header"><h2>Stocktakes</h2><button id="new-stocktake-btn" class="btn btn-primary">Start Stocktake</button></div>
+                    <p>Count a warehouse, explain differences, then submit for owner approval. Stock changes only after approval.</p>
+                    <div class="table-container"><table id="stocktakes-table"><thead><tr><th>Started</th><th>Warehouse</th><th>Status</th><th>Counted by</th><th>Actions</th></tr></thead><tbody></tbody></table></div>
+                    <div class="business-pager"><button id="stocktake-previous" class="btn btn-secondary">Previous</button><span id="stocktake-page"></span><button id="stocktake-next" class="btn btn-secondary">Next</button></div>
+                </section>
+                <section id="daily-closing-section" class="content-section">
+                    <div class="section-header"><h2>Daily Closing</h2><button id="refresh-closing-btn" class="btn btn-secondary">Refresh Report</button></div>
+                    <p>Ghana time · all staff combined for the selected warehouse. Sales and collections are reported separately.</p>
+                    <div class="form-row"><div class="form-group"><label for="closing-date">Business date</label><input type="date" id="closing-date"></div><div class="form-group"><label for="closing-warehouse">Warehouse</label><select id="closing-warehouse"></select></div></div>
+                    <div id="closing-report"></div>
+                    <form id="closing-form" class="card">
+                        <h3>Cash reconciliation</h3>
+                        <div class="form-row"><div class="form-group"><label for="closing-opening">Opening cash</label><input type="number" id="closing-opening" min="0" step="0.01" required value="0"></div><div class="form-group"><label for="closing-counted">Counted cash</label><input type="number" id="closing-counted" min="0" step="0.01" required></div></div>
+                        <details><summary>Cash added or removed outside sales</summary><div class="form-row"><div class="form-group"><label for="closing-added">Cash added</label><input type="number" id="closing-added" min="0" step="0.01" value="0"></div><div class="form-group"><label for="closing-removed">Cash removed</label><input type="number" id="closing-removed" min="0" step="0.01" value="0"></div></div></details>
+                        <p id="closing-difference" role="status"></p><div class="form-group"><label for="closing-notes">Notes / explanation</label><textarea id="closing-notes" maxlength="2000" rows="2"></textarea></div>
+                        <p id="closing-saved-state" role="status"></p><button id="save-closing-btn" class="btn btn-primary" type="submit">Save Closing</button>
+                        <div id="closing-history"></div>
+                    </form>
+                </section>
+
                     <section id="settings-section" class="content-section">
                         <div class="section-header">
                             <h2>Settings</h2>
@@ -647,6 +668,7 @@
                         <input type="number" id="product-liter20-price" step="0.01" min="0" placeholder="0.00">
                     </div>
                 </div>
+                <details id="product-paint-details"><summary>Paint details (optional)</summary><div class="paint-fields"><div class="form-group"><label for="product-brand">Brand</label><input id="product-brand" maxlength="80" placeholder=""></div><div class="form-group"><label for="product-colour_name">Colour name</label><input id="product-colour_name" maxlength="100" placeholder=""></div><div class="form-group"><label for="product-colour_code">Colour / tint code</label><input id="product-colour_code" maxlength="50" placeholder=""></div><div class="form-group"><label for="product-finish">Finish</label><input id="product-finish" maxlength="80" placeholder="e.g. Matt, Satin, Gloss"></div><div class="form-group"><label for="product-container_size">Container size</label><input id="product-container_size" maxlength="60" placeholder="e.g. 4L, 20L"></div></div></details>
                 <div id="product-initial-stock-section" class="form-section">
                     <h4>Initial stock (this warehouse only)</h4>
                     <div class="form-row">
@@ -752,58 +774,16 @@
                 <h3 id="customer-modal-title">Add Customer</h3>
                 <button class="modal-close" aria-label="Close">&times;</button>
             </div>
-            <form id="customer-form">
-                <input type="hidden" id="customer-id">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" id="customer-name" required placeholder="Customer name">
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" id="customer-email" placeholder="email@example.com">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Phone</label>
-                        <input type="text" id="customer-phone" placeholder="+233 XX XXX XXXX">
-                    </div>
-                    <div class="form-group">
-                        <label>Tax ID</label>
-                        <input type="text" id="customer-tax-id" placeholder="Optional">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Address</label>
-                    <textarea id="customer-address" rows="2" placeholder="Street address"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>City</label>
-                        <input type="text" id="customer-city" placeholder="City">
-                    </div>
-                    <div class="form-group">
-                        <label>Region</label>
-                        <input type="text" id="customer-state" placeholder="Region/State">
-                    </div>
-                    <div class="form-group">
-                        <label>Postal Code</label>
-                        <input type="text" id="customer-postal-code" placeholder="Postal code">
-                    </div>
-                    <div class="form-group">
-                        <label>Country</label>
-                        <input type="text" id="customer-country" placeholder="Ghana" value="Ghana">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Notes</label>
-                    <textarea id="customer-notes" rows="2" placeholder="Additional notes"></textarea>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Customer</button>
-                </div>
+            <form id="customer-form"><input type="hidden" id="customer-id">
+                <div class="form-row"><div class="form-group"><label for="customer-name">Name *</label><input id="customer-name" required maxlength="200" placeholder="Customer name"></div><div class="form-group"><label for="customer-phone">Phone</label><input id="customer-phone" type="tel" maxlength="40" placeholder="+233 XX XXX XXXX"></div></div>
+                <details id="customer-optional"><summary>Optional customer details</summary>
+                    <div class="form-row"><div class="form-group"><label for="customer-email">Email</label><input type="email" id="customer-email" maxlength="200"></div><div class="form-group"><label for="customer-tax-id">Customer identifier / Tax ID</label><input id="customer-tax-id" maxlength="100"></div></div>
+                    <div class="form-group"><label for="customer-address">Address</label><textarea id="customer-address" rows="2" maxlength="500"></textarea></div>
+                    <div class="form-row"><div class="form-group"><label for="customer-city">City</label><input id="customer-city" maxlength="100"></div><div class="form-group"><label for="customer-state">Region / State</label><input id="customer-state" maxlength="100"></div></div>
+                    <div class="form-row"><div class="form-group"><label for="customer-postal-code">Postal Code</label><input id="customer-postal-code" maxlength="40"></div><div class="form-group"><label for="customer-country">Country</label><input id="customer-country" maxlength="100" value="Ghana"></div></div>
+                    <div class="form-group"><label for="customer-notes">Notes</label><textarea id="customer-notes" rows="2" maxlength="2000"></textarea></div>
+                </details>
+                <div class="modal-actions"><button type="button" class="btn btn-secondary modal-close">Cancel</button><button type="submit" class="btn btn-primary">Save Customer</button></div>
             </form>
         </div>
     </div>
@@ -842,12 +822,14 @@
                         <label>Payment Status</label>
                         <select id="sale-payment-status">
                             <option value="completed">Paid</option>
-                            <option value="pending">Unpaid (Credit)</option>
+                            <option value="partial">Part payment</option><option value="pending">Unpaid (Credit)</option>
                         </select>
                     </div>
                 </div>
+                    <div id="sale-credit-fields" hidden><div class="form-row"><div id="sale-deposit-group" class="form-group"><label for="sale-amount-paid">Amount received now</label><input id="sale-amount-paid" type="number" min="0" step="0.01" value="0"></div><div class="form-group"><label for="sale-due-date">Payment due date (optional)</label><input type="date" id="sale-due-date"></div></div><p id="sale-payment-summary"></p></div>
                     <div class="form-group">
                         <label>Items</label>
+                        <div id="sale-stock-errors" class="sale-stock-errors" role="alert" tabindex="-1" hidden></div>
                         <div id="sale-items-container">
                             <div class="sale-item-row">
                                 <select class="sale-item-product" required>
@@ -859,8 +841,8 @@
                                     <option value="liter20">20L Container</option>
                                 </select>
                                 <input type="number" class="sale-item-qty" min="1" value="1" required>
-                                <label class="sale-item-labeled"><span>Markup/item</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
-                                <label class="sale-item-labeled"><span>Discount/item</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label>
+                                <details class="sale-adjustments"><summary>Price adjustments</summary><div><label class="sale-item-labeled"><span>Markup/item</span><input type="number" class="sale-item-extra" step="0.01" min="0" value="0" placeholder="0.00"></label>
+                                <label class="sale-item-labeled"><span>Discount/item</span><input type="number" class="sale-item-discount" step="0.01" min="0" value="0" placeholder="0.00"></label></div></details>
                                 <span class="sale-item-price"></span>
                                 <span class="sale-item-total">₵0.00</span>
                                 <button type="button" class="btn btn-icon btn-danger remove-item" aria-label="Remove item">×</button>
@@ -1164,6 +1146,30 @@
             </form>
         </div>
     </div>
+
+
+    <div id="stocktake-modal" class="modal modal-large"><div class="modal-content">
+        <div class="modal-header"><h3 id="stocktake-title">Stocktake</h3><button class="modal-close" aria-label="Close">&times;</button></div>
+        <div id="stocktake-start"><label for="stocktake-warehouse">Warehouse</label><select id="stocktake-warehouse"></select><button id="create-stocktake-btn" class="btn btn-primary" type="button">Create Count Sheet</button></div>
+        <div id="stocktake-content" hidden><p id="stocktake-status" role="status"></p>
+            <div class="table-container"><table id="stocktake-counts"><thead><tr><th>Product</th><th>Expected stock</th><th>Counted cartons</th><th>Counted loose units</th><th>Counted 20L</th><th>Difference</th></tr></thead><tbody></tbody></table></div>
+            <label for="stocktake-notes">Notes / reasons for differences</label><textarea id="stocktake-notes" maxlength="2000" rows="2"></textarea>
+            <div class="modal-actions business-actions"><button id="save-stocktake-btn" class="btn btn-secondary">Save Draft</button><button id="submit-stocktake-btn" class="btn btn-primary">Submit for Approval</button><button id="approve-stocktake-btn" class="btn btn-primary">Approve Adjustments</button><button id="recount-stocktake-btn" class="btn btn-secondary">Refresh Stock and Recount</button><button id="cancel-stocktake-btn" class="btn btn-danger">Cancel Stocktake</button></div>
+        </div>
+    </div></div>
+    <div id="payment-modal" class="modal modal-large"><div class="modal-content">
+        <div class="modal-header"><h3>Payments and Balance</h3><button class="modal-close" aria-label="Close">&times;</button></div>
+        <div id="payment-summary"></div>
+        <form id="payment-form"><div class="form-row"><div class="form-group"><label for="payment-kind">Transaction</label><select id="payment-kind"><option value="payment">Receive payment</option><option value="refund">Pay customer refund</option></select></div><div class="form-group"><label for="payment-amount">Amount</label><input id="payment-amount" type="number" min="0.01" step="0.01" required></div><div class="form-group"><label for="payment-method">Method</label><select id="payment-method"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Bank Transfer</option><option value="momo">Mobile Money</option></select></div></div>
+            <div class="form-row"><div class="form-group"><label for="payment-reference">Reference (optional)</label><input id="payment-reference" maxlength="120"></div><div class="form-group"><label for="payment-notes">Notes (optional)</label><input id="payment-notes" maxlength="1000"></div></div>
+            <p id="payment-retry-hint" role="status"></p><div class="modal-actions"><button id="retry-payment-btn" class="btn btn-secondary" type="button" hidden>Retry Pending Payment</button><button id="record-payment-btn" class="btn btn-primary" type="submit">Record Transaction</button></div>
+        </form><div class="table-container"><table id="payment-history"><thead><tr><th>Date</th><th>Transaction</th><th>Method</th><th>Amount</th><th>Reference</th><th>Recorded by</th></tr></thead><tbody></tbody></table></div>
+    </div></div>
+    <div id="statement-modal" class="modal modal-large"><div class="modal-content">
+        <div class="modal-header"><h3 id="statement-title">Customer Statement</h3><button class="modal-close" aria-label="Close">&times;</button></div>
+        <div id="statement-summary"></div><div class="table-container"><table id="statement-table"><thead><tr><th>Invoice / date</th><th>Warehouse</th><th>Net invoice</th><th>Paid less refunds</th><th>Balance</th><th>Refund owed</th><th>Due date</th><th>Actions</th></tr></thead><tbody></tbody></table></div>
+        <div class="business-pager"><button id="statement-previous" class="btn btn-secondary">Previous</button><span id="statement-page"></span><button id="statement-next" class="btn btn-secondary">Next</button></div>
+    </div></div>
 
     <div id="toast-container" class="toast-container"></div>
 

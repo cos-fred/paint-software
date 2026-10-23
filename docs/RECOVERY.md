@@ -32,8 +32,12 @@ Failures appear in server logs, the Settings backup panel and a system alert. If
 
 ## Schema upgrade recovery
 
-Before applying upgrade version 2 to an existing database, the app uses SQLite's VACUUM INTO to save a consistent snapshot in migration-backups beside DB_PATH. The snapshot includes committed WAL contents and is made before any schema changes. If it cannot be created, startup stops before changing the schema. The applied schema_migrations row records backup_path. New empty databases do not need this snapshot, and subsequent startups do not repeat it.
+Before applying a pending schema upgrade to an existing database, the app uses SQLite's VACUUM INTO to save a consistent snapshot in migration-backups beside DB_PATH. The snapshot includes committed WAL contents and is made before any schema changes. If it cannot be created, startup stops before changing the schema. The applied schema_migrations row records backup_path. New empty databases do not need this snapshot, and subsequent startups do not repeat it.
 
 Version 2 adds missing sale-item discounts, removes the sales.tax column and obsolete tax settings, and converts legacy carton balances and backfills carton sizes once. Existing recorded sale totals and return credits remain unchanged. A failed version 2 transaction rolls back its changes. Products with unknown carton sizes keep their legacy carton counts and receive an inventory-review alert; edit the product to set its units per carton. That edit converts its remaining cartons, fills only missing historical sizes for that product, and marks the review alert as read.
 
 Migration snapshots are local, unencrypted recovery files with restricted filesystem permissions; keep the database directory private. They are separate from scheduled encrypted backups and are not automatically pruned. Keep a snapshot and the previous application version until the upgraded database has been checked. To roll back, stop the app, restore the snapshot to a new database with the restore command above, and run the saved previous application version against it. Starting the updated app applies the upgrade again. Remove old migration snapshots only after recovery is no longer needed.
+
+## Business feature upgrade (version 3)
+
+Version 3 uses the same pre-upgrade snapshot procedure, named before-v3. It adds the payment ledger, stocktakes, closing records and paint fields transactionally. Backups of an upgraded database must contain those tables and the sale_accounts view. Restore an old snapshot with its compatible application version; updated code migrates it on startup. See BUSINESS-WORKFLOWS.md for how prior payment statuses are imported.

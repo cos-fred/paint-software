@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../database');
 const { authenticateToken, requireAdmin } = require('../auth');
+const { decorate } = require('../services/payments');
 const { logAudit } = require('../services/audit');
 const { parseLimit, parseOffset } = require('../lib/validation');
 
@@ -15,8 +16,8 @@ router.get('/', (req, res) => {
         const { search, limit = 100, offset = 0 } = req.query;
         let query = `
             SELECT c.*,
-                (SELECT COUNT(*) FROM sales s WHERE s.customer_id = c.id AND s.payment_status IN ('completed','refunded')) AS purchase_count,
-                (SELECT COALESCE(SUM(s.total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=s.id)), 0) FROM sales s WHERE s.customer_id = c.id AND s.payment_status IN ('completed','refunded')) AS total_spent,
+                (SELECT COUNT(*) FROM sales s WHERE s.customer_id = c.id AND s.payment_status IN ('pending','completed','refunded')) AS purchase_count,
+                (SELECT COALESCE(SUM(s.total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=s.id)), 0) FROM sales s WHERE s.customer_id = c.id AND s.payment_status IN ('pending','completed','refunded')) AS total_spent,
                 (SELECT MAX(s.sale_date) FROM sales s WHERE s.customer_id = c.id) AS last_purchase
             FROM customers c WHERE c.is_active = 1
         `;
@@ -27,10 +28,50 @@ router.get('/', (req, res) => {
         }
         query += ' ORDER BY c.name ASC LIMIT ? OFFSET ?';
         params.push(parseLimit(limit, 100), parseOffset(offset));
-        res.json(db.prepare(query).all(...params));
+        res.json(
+            db
+                .prepare(query)
+                .all(...params)
+                .map((c) => ({
+                    ...c,
+                    ...db
+                        .prepare(
+                            'SELECT COALESCE(SUM(balance_due_cents),0)/100.0 AS balance_due,COALESCE(SUM(refund_due_cents),0)/100.0 AS refund_due,COALESCE(SUM(CASE WHEN due_date<CURRENT_DATE THEN balance_due_cents ELSE 0 END),0)/100.0 AS overdue_balance FROM sale_accounts WHERE customer_id=?'
+                        )
+                        .get(c.id)
+                }))
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Something went wrong' });
+    }
+});
+
+router.get('/:id/statement', (req, res) => {
+    try {
+        const customer = db
+            .prepare('SELECT * FROM customers WHERE id=?')
+            .get(req.params.id);
+        if (!customer)
+            return res.status(404).json({ error: 'Customer not found' });
+        const summary = db
+            .prepare(
+                'SELECT COALESCE(SUM(balance_due_cents),0)/100.0 AS balance_due,COALESCE(SUM(refund_due_cents),0)/100.0 AS refund_due FROM sale_accounts WHERE customer_id=?'
+            )
+            .get(customer.id);
+        const invoices = db
+            .prepare(
+                'SELECT s.*,w.name AS warehouse_name FROM sales s LEFT JOIN warehouses w ON w.id=s.warehouse_id WHERE customer_id=? ORDER BY s.sale_date DESC,s.rowid DESC LIMIT ? OFFSET ?'
+            )
+            .all(
+                customer.id,
+                parseLimit(req.query.limit, 50),
+                parseOffset(req.query.offset)
+            )
+            .map(decorate);
+        res.json({ customer, summary, invoices });
+    } catch (e) {
+        require('../lib/errors').sendSafeError(res, e, '[customer statement]');
     }
 });
 
@@ -181,6 +222,15 @@ router.put('/:id', (req, res) => {
 
 router.delete('/:id', requireAdmin, (req, res) => {
     try {
+        const unsettled = db
+            .prepare(
+                'SELECT 1 FROM sale_accounts WHERE customer_id=? AND (balance_due_cents>0 OR refund_due_cents>0) LIMIT 1'
+            )
+            .get(req.params.id);
+        if (unsettled)
+            return res.status(409).json({
+                error: 'Settle outstanding balances and refunds before archiving this customer'
+            });
         // Soft-delete so historical sales keep their customer reference.
         const result = db
             .prepare(

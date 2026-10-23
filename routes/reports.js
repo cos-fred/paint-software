@@ -114,7 +114,7 @@ router.get('/sales/summary', (req, res) => {
             COALESCE(SUM((SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns sr WHERE sr.sale_id=sales.id)),0) as returns_value,
             COALESCE(SUM(total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns sr WHERE sr.sale_id=sales.id)),0) as total_revenue,
             COALESCE(AVG(total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns sr WHERE sr.sale_id=sales.id)),0) as avg_sale_value
-            FROM sales WHERE payment_status IN ('completed','refunded')`;
+            FROM sales WHERE payment_status IN ('pending','completed','refunded')`;
         const params = [];
         if (start_date) {
             query += ' AND sale_date >= ?';
@@ -145,7 +145,7 @@ router.get('/sales/by-product', (req, res) => {
             SUM(si.net_total_cents-(SELECT COALESCE(SUM(amount_cents),0) FROM sale_returns WHERE sale_item_id=si.id))/100.0 as total_revenue,
             COUNT(DISTINCT si.sale_id) as sales_count
             FROM sale_items si JOIN products p ON si.product_id = p.id JOIN sales s ON si.sale_id = s.id
-            WHERE s.payment_status IN ('completed','refunded')`;
+            WHERE s.payment_status IN ('pending','completed','refunded')`;
         const params = [];
         if (start_date) {
             query += ' AND s.sale_date >= ?';
@@ -172,7 +172,7 @@ router.get('/sales/by-customer', (req, res) => {
     try {
         const { start_date, end_date, warehouse_id, limit = 20 } = req.query;
         let query = `SELECT c.id, c.name, c.email, c.phone, COUNT(s.id) as total_purchases, SUM(s.total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=s.id)) as total_spent, AVG(s.total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=s.id)) as avg_purchase, MAX(s.sale_date) as last_purchase
-            FROM sales s JOIN customers c ON s.customer_id = c.id WHERE s.payment_status IN ('completed','refunded')`;
+            FROM sales s JOIN customers c ON s.customer_id = c.id WHERE s.payment_status IN ('pending','completed','refunded')`;
         const params = [];
         if (start_date) {
             query += ' AND s.sale_date >= ?';
@@ -200,7 +200,7 @@ router.get('/sales/daily', (req, res) => {
     try {
         const { days = 30, warehouse_id } = req.query;
         let query = `SELECT date(sale_date) as sale_day, COUNT(*) as sales_count, SUM(total) as gross_revenue, SUM((SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=sales.id)) as returns_value, SUM(total-(SELECT COALESCE(SUM(amount_cents),0)/100.0 FROM sale_returns WHERE sale_id=sales.id)) as daily_revenue
-            FROM sales WHERE payment_status IN ('completed','refunded') AND sale_date >= date('now', ?)`;
+            FROM sales WHERE payment_status IN ('pending','completed','refunded') AND sale_date >= date('now', ?)`;
         const params = [`-${parseLimit(days, 30, 366)} days`];
         if (warehouse_id) {
             query += ' AND warehouse_id = ?';

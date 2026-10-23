@@ -56,12 +56,8 @@ function createApp() {
                 directives: {
                     defaultSrc: ["'self'"],
                     scriptSrc: ["'self'"],
-                    styleSrc: [
-                        "'self'",
-                        "'unsafe-inline'",
-                        'https://fonts.googleapis.com'
-                    ],
-                    fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+                    styleSrc: ["'self'", "'unsafe-inline'"],
+                    fontSrc: ["'self'", 'data:'],
                     imgSrc: ["'self'", 'data:'],
                     connectSrc: ["'self'", 'ws:', 'wss:'],
                     objectSrc: ["'none'"],
@@ -91,11 +87,9 @@ function createApp() {
             !['GET', 'HEAD', 'OPTIONS'].includes(req.method) &&
             require('./services/maintenance').isActive()
         ) {
-            return res
-                .status(503)
-                .json({
-                    error: 'System maintenance is in progress. Please retry shortly.'
-                });
+            return res.status(503).json({
+                error: 'System maintenance is in progress. Please retry shortly.'
+            });
         }
         next();
     });
@@ -112,6 +106,9 @@ function createApp() {
     app.use('/api/auth', authRoutes);
     app.use('/api/products', productRoutes);
     app.use('/api/customers', customerRoutes);
+    app.use('/api/sales/:saleId/payments', require('./routes/payments'));
+    app.use('/api/stocktakes', require('./routes/stocktakes'));
+    app.use('/api/daily-closing', require('./routes/daily-closing'));
     app.use('/api/sales', salesRoutes);
     app.use('/api/reports', reportRoutes);
     app.use('/api/alerts', alertRoutes);

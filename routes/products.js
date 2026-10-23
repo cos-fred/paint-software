@@ -1,5 +1,6 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const { paintFields } = require('../lib/paint-fields');
 const { getDb } = require('../database');
 const { authenticateToken, requirePermission } = require('../auth');
 const { logAudit } = require('../services/audit');
@@ -52,8 +53,8 @@ router.get('/', (req, res) => {
 
         if (search) {
             query +=
-                ' AND (p.name LIKE ? OR p.description LIKE ? OR p.sku LIKE ?)';
-            params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+                ' AND (p.name LIKE ? OR p.description LIKE ? OR p.sku LIKE ? OR p.brand LIKE ? OR p.colour_name LIKE ? OR p.colour_code LIKE ? OR p.finish LIKE ? OR p.container_size LIKE ?)';
+            params.push(...Array(8).fill(`%${search}%`));
         }
 
         query += ' ORDER BY p.name ASC';
@@ -248,6 +249,7 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
                 400,
                 'Product name must be text of at most 200 characters'
             );
+        const paint = paintFields(req.body);
         const targetWarehouseId = String(warehouse_id).trim();
 
         if (sku) {
@@ -274,6 +276,12 @@ router.post('/', requirePermission('manage_products'), (req, res) => {
                 validatedThreshold,
                 automatic ? 'auto' : 'manual'
             );
+            if (Object.keys(paint).length)
+                db.prepare(
+                    `UPDATE products SET ${Object.keys(paint)
+                        .map((k) => k + '=?')
+                        .join(',')} WHERE id=?`
+                ).run(...Object.values(paint), id);
 
             const warehouses = db
                 .prepare('SELECT id FROM warehouses WHERE is_active = 1')
@@ -372,8 +380,9 @@ router.put('/:id', requirePermission('manage_products'), (req, res) => {
                 ? parsePositiveInteger(units_per_carton, 'Units per carton')
                 : existing.units_per_carton;
 
-        const updates = [];
-        const params = [];
+        const paint = paintFields(req.body);
+        const updates = Object.keys(paint).map((key) => key + ' = ?');
+        const params = Object.values(paint);
         if (name !== undefined) {
             if (typeof name !== 'string' || !name.trim() || name.length > 200)
                 throw new ClientError(400, 'Invalid product name');

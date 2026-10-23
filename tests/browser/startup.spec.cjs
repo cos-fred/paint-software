@@ -1,6 +1,11 @@
 const { test, expect } = require('@playwright/test');
 
-for (const asset of ['/stock.js', '/app.js', '/launch-controls.js']) {
+for (const asset of [
+    '/stock.js',
+    '/app.js',
+    '/launch-controls.js',
+    '/business-controls.js'
+]) {
     test(`shows a retry screen when ${asset} fails to load`, async ({
         page
     }) => {

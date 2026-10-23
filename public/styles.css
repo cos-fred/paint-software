@@ -1030,6 +1030,19 @@ tr:last-child td {
     border-top: 1px solid var(--border);
 }
 
+.sale-stock-errors {
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    color: var(--danger);
+    overflow-wrap: anywhere;
+}
+.sale-stock-errors ul { margin: 10px 0 0; padding-left: 20px; }
+.sale-stock-errors li + li { margin-top: 8px; }
+.sale-item-row.stock-shortage { border-color: var(--danger); }
+.sale-item-row .sale-item-qty[aria-invalid="true"] { border-color: var(--danger); }
+
 .sale-item-row, .po-item-row {
     display: flex;
     gap: 10px;
@@ -1678,3 +1691,24 @@ button:focus-visible,a:focus-visible { outline:3px solid var(--primary); outline
 @media(prefers-reduced-motion:reduce) {
     *,*::before,*::after { animation:none !important; transition:none !important; }
 }
+
+/* Business workflows */
+details > summary { cursor:pointer; font-weight:600; padding:8px 0; }
+details[open] > summary { margin-bottom:8px; }
+.paint-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.sale-item-row { grid-template-columns:minmax(160px,2fr) 125px 70px minmax(135px,1fr) minmax(75px,.7fr) minmax(85px,.7fr) 36px; }
+.sale-adjustments { min-width:0; font-size:12px; }.sale-adjustments .sale-item-labeled { margin:6px 0; }
+.sale-adjustments input { width:100%; }.business-pager,.business-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:16px 0; }
+#stocktake-counts input { width:90px; }td small { display:block; color:var(--text-secondary); margin-top:4px; }
+.business-summary { display:flex; gap:18px; flex-wrap:wrap; margin:16px 0; }.business-summary > div { padding:12px; background:var(--bg-secondary); border-radius:8px; min-width:140px; }
+.business-summary strong { display:block; margin-top:6px; }.business-warning { padding:12px; border:1px solid var(--warning); border-radius:8px; margin:12px 0; }
+#closing-form { padding:20px; margin-top:18px; }#stocktake-notes { width:100%; }#closing-history { margin-top:12px; }
+@media(max-width:900px){.sale-item-row{display:flex;flex-wrap:wrap}.sale-item-product{flex:1 1 180px}.sale-adjustments{flex:1 1 140px}}
+
+#stocktake-start,#stocktake-content { padding:20px; }
+#stocktake-counts input { border:1px solid var(--border);border-radius:6px;padding:8px; }
+#stocktake-notes { border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:6px; }
+#payment-summary,#statement-summary { padding:0 20px; }
+#payment-modal .table-container,#statement-modal .table-container { margin:0 20px 20px; }
+#statement-modal .business-pager { padding:0 20px; }
+#closing-form h3 { margin-bottom:18px; }

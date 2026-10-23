@@ -18,7 +18,7 @@ function fixture(source) {
         const warehouse=db.prepare('SELECT id FROM warehouses LIMIT 1').get().id;
         db.prepare("INSERT INTO products(id,name,unit_price,carton_price,units_per_carton) VALUES('fixture-product','Fixture',10,120,12)").run();
         db.prepare("INSERT INTO product_stock(id,product_id,warehouse_id,unit_stock,carton_stock) VALUES('fixture-stock','fixture-product',?,0,5)").run(warehouse);
-        db.exec('DELETE FROM schema_migrations WHERE version=2');
+        db.exec('DELETE FROM schema_migrations WHERE version IN (2,3)');
         db.exec('ALTER TABLE sale_items DROP COLUMN discount');
         db.exec('ALTER TABLE sales ADD COLUMN tax REAL NOT NULL DEFAULT 0');
         const columns=t=>db.prepare('PRAGMA table_info('+t+')').all().map(c=>c.name);
